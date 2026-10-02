@@ -1,0 +1,152 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'cn.screenqa.lite'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'cn.screenqa.lite'
+        minSdk 26
+        targetSdk 35
+        versionCode 24
+        versionName '1.0.0'
+        // The liquid glass native pipeline ships arm64-v8a only; x86_64 keeps the app installable
+        // (emulator) and LiquidDock falls back to the hand-drawn GlassDock there.
+        ndk { abiFilters 'arm64-v8a', 'x86_64' }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    buildFeatures { buildConfig true }
+    flavorDimensions += 'audience'
+    productFlavors {
+        user {
+            dimension 'audience'
+            applicationId 'cn.screenqa.lite'
+            buildConfigField 'boolean', 'DEVELOPER_BUILD', 'false'
+            buildConfigField 'boolean', 'DIAGNOSTICS_ENABLED', 'true'
+            buildConfigField 'boolean', 'ROOT_SUPPORTED', 'true'
+            resValue 'string', 'app_name', '大学生小帮手'
+            resValue 'string', 'accessibility_service_name', '大学生小帮手学习辅助'
+        }
+        developer {
+            dimension 'audience'
+            applicationId 'cn.screenqa.lite.dev'
+            versionCode 24
+            versionName '1.0.0'
+            versionNameSuffix '-dev'
+            buildConfigField 'boolean', 'DEVELOPER_BUILD', 'true'
+            buildConfigField 'boolean', 'DIAGNOSTICS_ENABLED', 'true'
+            buildConfigField 'boolean', 'ROOT_SUPPORTED', 'true'
+            resValue 'string', 'app_name', '大学生小帮手 Dev'
+            resValue 'string', 'accessibility_service_name', '大学生小帮手 Dev 学习辅助'
+        }
+    }
+    signingConfigs {
+        debug {
+            rootProject.file('.local').mkdirs()
+            storeFile rootProject.file('.local/debug.keystore')
+        }
+    }
+    buildTypes {
+        debug { }
+        release {
+            debuggable false
+            signingConfig null
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+}
+
+abstract class DeveloperNotesTask extends DefaultTask {
+    @InputFile abstract RegularFileProperty getNotesFile()
+    @OutputDirectory abstract DirectoryProperty getOutputDirectory()
+    @TaskAction void copyNotes() {
+        def target = outputDirectory.file('DEVELOPER_BUILD.md').get().asFile
+        target.parentFile.mkdirs()
+        target.bytes = notesFile.get().asFile.bytes
+    }
+}
+
+def developerAssets = tasks.register('prepareDeveloperAssets', DeveloperNotesTask) {
+    notesFile.set(rootProject.layout.projectDirectory.file('docs/DEVELOPER_BUILD.md'))
+    outputDirectory.set(layout.buildDirectory.dir('generated/developerAssets'))
+}
+
+abstract class LegalDocumentsTask extends DefaultTask {
+    @InputDirectory abstract DirectoryProperty getDocumentsDirectory()
+    @OutputDirectory abstract DirectoryProperty getOutputDirectory()
+    @TaskAction void copyDocuments() {
+        ['USER_AGREEMENT.md', 'PRIVACY_POLICY.md', 'OPEN_SOURCE_INFO.txt',
+         'LICENSE_LIQUID_GLASS.txt', 'LICENSE_APACHE_2_0.txt'].each { name ->
+            def target = outputDirectory.file('legal/' + name).get().asFile
+            target.parentFile.mkdirs()
+            target.bytes = documentsDirectory.file(name).get().asFile.bytes
+        }
+    }
+}
+
+def legalAssets = tasks.register('prepareLegalAssets', LegalDocumentsTask) {
+    documentsDirectory.set(rootProject.layout.projectDirectory.dir('docs/legal'))
+    outputDirectory.set(layout.buildDirectory.dir('generated/legalAssets'))
+}
+
+// Developer builds stay local/debug; release is reserved for the user flavor.
+androidComponents {
+    beforeVariants(selector().withBuildType('release')) { variant ->
+        if (variant.productFlavors.any { it.first == 'audience' && it.second == 'developer' }) {
+            variant.enable = false
+        }
+    }
+    onVariants(selector().all()) { variant ->
+        variant.sources.assets.addGeneratedSourceDirectory(legalAssets, { it.outputDirectory })
+        if (variant.productFlavors.any { it.first == 'audience' && it.second == 'developer' }) {
+            variant.sources.assets.addGeneratedSourceDirectory(developerAssets, { it.outputDirectory })
+        }
+    }
+}
+
+// Fail before packaging obvious embedded credentials; never print secret contents.
+def packagingInputs = files(fileTree('src'), buildFile, rootProject.file('build.gradle'),
+        rootProject.file('gradle.properties'), rootProject.file('docs/DEVELOPER_BUILD.md'),
+        rootProject.fileTree('docs/legal'))
+def verifyNoEmbeddedSecrets = tasks.register('verifyNoEmbeddedSecrets') {
+    group = 'verification'
+    description = 'Rejects private signing files and literal credentials in packaging inputs.'
+    inputs.files(packagingInputs)
+    doLast {
+        def secretPatterns = [
+                ~/-----BEGIN (?:RSA |EC |OPENSSH |DSA |ENCRYPTED )?PRIVATE KEY-----/,
+                ~/\bsk-[A-Za-z0-9_-]{16,}\b/,
+                ~/\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/,
+                ~/\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/,
+                ~/(?i)(?:api[_-]?key|password|passwd|storePassword|keyPassword|clientSecret|accessToken)\s*[:=]\s*["'][^"'\r\n]{4,}["']/
+        ]
+        packagingInputs.files.findAll { it.isFile() }.each { input ->
+            def name = input.name.toLowerCase(Locale.ROOT)
+            if (name == 'local.properties' || name == '.env' || name.startsWith('.env.') ||
+                    name ==~ /.*\.(jks|keystore|p12|pfx|pem|key|der)/ ||
+                    name ==~ /(signing|keystore|secrets|credentials|passwords).*\.(properties|json|xml|ya?ml)/) {
+                throw new GradleException("Private configuration in packaging inputs: ${input.name}")
+            }
+            if (name ==~ /.*\.(java|xml|gradle|kts|properties|json|ya?ml|txt|md)/) {
+                def content = input.getText('UTF-8')
+                if (secretPatterns.any { it.matcher(content).find() }) {
+                    throw new GradleException("Possible embedded credential: ${rootProject.relativePath(input)}")
+                }
+            }
+        }
+    }
+}
+
+tasks.configureEach {
+    if (name == 'preBuild') dependsOn(verifyNoEmbeddedSecrets)
+}
+dependencies {
+    implementation 'com.google.mlkit:text-recognition-chinese:16.0.1'
+    // Live liquid glass dock: real-time backdrop sampling, refraction and edge highlight.
+    implementation 'com.github.QWEA0:liquidglass:v2.0.11'
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.json:json:20240303'
+}

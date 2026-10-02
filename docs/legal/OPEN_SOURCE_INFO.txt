@@ -1,0 +1,61 @@
+大学生小帮手 · 开源信息与来源
+
+项目仓库
+https://github.com/Cenbyte/ScreenQA
+维护者与运营者：Cenbyte
+联系邮箱：Cenbyte.dev@outlook.com
+源码许可：随仓库附带的 MIT LICENSE；保留原署名 DSH（DeepSeek）。历史界面重做作者：DSH。
+
+图片文字识别（OCR）
+Google ML Kit 中文文字识别 16.0.1
+作者与提供者：Google
+依赖：com.google.mlkit:text-recognition-chinese:16.0.1
+从本工程最早的 Git 基线起使用，在设备上识别屏幕图片中的中文文字。
+官方来源：https://developers.google.com/ml-kit/vision/text-recognition/v2/android
+适用条款：https://developers.google.com/ml-kit/terms
+SDK 和模型适用 Google ML Kit 条款；示例代码的 Apache-2.0 不等于整个 SDK 的许可。
+
+液态玻璃界面库
+Liquid-Glass-Android v2.0.11
+仓库维护者：QWEA0；上游许可作者署名：pandadog（2025–2026）
+用途：底部 Dock 的背景采样、模糊、折射与高光。
+来源：https://github.com/QWEA0/Liquid-Glass-Android
+许可：MIT
+版本许可：https://github.com/QWEA0/Liquid-Glass-Android/blob/v2.0.11/LICENSE
+
+Kotlin 标准库
+作者与维护者：JetBrains 及贡献者
+用途：液态玻璃库的传递运行依赖；本项目源代码仍为 Java / 原生 View。
+来源：https://github.com/JetBrains/kotlin
+许可：Apache-2.0
+
+图标、素材与字体
+绿色角色图标：Cenbyte 原创并提供用于本项目公开发布。
+底部导航 home / tune / person：改编自 Google Material Design Icons。
+作者：Google 及贡献者；已转为 Android VectorDrawable 并调整显示颜色。
+来源：https://github.com/google/material-design-icons
+许可：Apache-2.0
+其它矢量图标：工程内已有或开发中绘制的资源；独立原作者记录不完整，以源码及保留的许可为准。
+极光背景与自绘界面：项目源码，历史界面实现作者 DSH，后续修复见 DEVLOG。
+字体：Android / 设备系统提供的 sans 字体，未额外打包字体文件。
+
+AI 服务
+默认使用 DeepSeek 的 HTTPS 接口，也支持用户配置的兼容服务。
+服务提供者：DeepSeek 或所选接口的运营者；本应用不打包其模型权重。
+来源：https://www.deepseek.com
+各服务按其自身条款提供，不因此成为本项目 MIT 许可的一部分。
+
+测试与构建工具
+JUnit 4.13.2：JUnit 团队与贡献者；EPL-1.0；https://github.com/junit-team/junit4
+JSON-java 20240303：Douglas Crockford、Sean Leary 及贡献者；Public Domain；https://github.com/stleary/JSON-java
+以上两项仅用于 JVM 测试，不是本应用顶层运行依赖。
+Gradle：Gradle 团队与贡献者；https://github.com/gradle/gradle
+Android 构建插件与系统 API：Google / Android 开源项目及贡献者；https://source.android.com
+构建工具和服务按各自许可、条款提供。
+
+历史开发 skill
+不明来源：名称、作者及出处未确认，不作为已经核实的应用运行依赖列出。
+
+相关源码、许可与贡献记录保留在仓库；本页署名不替代各项目的许可文本。
+
+由 Codex 辅助开发
