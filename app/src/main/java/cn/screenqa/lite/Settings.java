@@ -20,6 +20,8 @@ final class Settings {
     Settings(Context context) { prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE); }
     boolean autoSelect() {return prefs.getBoolean("auto_select",false);}
     boolean autoNext() {return prefs.getBoolean("auto_next",false);}
+    boolean nextOverlay(){return prefs.getBoolean("next_overlay",false);}
+    void setNextOverlay(boolean value){prefs.edit().putBoolean("next_overlay",value).apply();}
     void setAutoNext(boolean value) {prefs.edit().putBoolean("auto_next",value).apply();}
     void setAutoSelect(boolean value) {prefs.edit().putBoolean("auto_select",value).apply();}
     boolean rootEnabled(){return BuildConfig.ROOT_SUPPORTED&&prefs.getBoolean("root_enabled",false);}
@@ -53,17 +55,15 @@ final class Settings {
     void setStrategy(AutoAnswerStrategy value) {prefs.edit().putInt("auto_strategy",value.ordinal()).apply();}
     String themeId(){return prefs.getString("theme_id",ThemePalette.DEFAULT.id);}
     ThemePalette theme(){return ThemePalette.fromStored(themeId());}
-    void setThemeId(String id){prefs.edit().putString("theme_id",id).apply();}
+    void setThemeId(String id){prefs.edit().putString("theme_id",id).putBoolean("theme_user_selected",true).apply();}
     /**
-     * One-time move onto the shipping default (the floating window palette). An installation that
-     * never picked a theme and one that still sits on the previous default both follow it; any other
-     * explicit choice the user made is kept as-is.
+     * Move the previous default to ivory once; retain other themes and recorded explicit selections.
      */
     void migrateThemeDefault(){
-        if(prefs.getBoolean("theme_default_migrated",false))return;
+        if(prefs.getBoolean("theme_ivory_default_migrated",false))return;
         String stored=prefs.getString("theme_id",null);
-        String target=stored==null||ThemePalette.LEGACY_DEFAULT_ID.equals(stored)?ThemePalette.DEFAULT.id:stored;
-        prefs.edit().putBoolean("theme_default_migrated",true).putString("theme_id",target).apply();
+        String target=ThemePalette.defaultMigration(stored,prefs.getBoolean("theme_user_selected",false),prefs.getBoolean("theme_default_migrated",false));
+        prefs.edit().putBoolean("theme_default_migrated",true).putBoolean("theme_ivory_default_migrated",true).putString("theme_id",target).apply();
     }
     boolean reduceMotion(){return prefs.getBoolean("reduce_motion",false);}
     void setReduceMotion(boolean value){prefs.edit().putBoolean("reduce_motion",value).apply();}

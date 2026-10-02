@@ -36,6 +36,20 @@ public final class CaptureService extends Service {
     private final ExecutorService network=Executors.newSingleThreadExecutor();
     private final ExecutorService imaging=Executors.newSingleThreadExecutor();
     private final QuestionTracker tracker=new QuestionTracker();
+    private long stabilityWaitStartedAt;
+    private final Runnable confirmStableFrame=this::confirmStability;
+    private void confirmStability(){
+        if(destroyed||paused||!autoMode||selector!=null||holdingAnswer()||
+                !tracker.waitingForStability()||tapInFlight||textInputInFlight||nextPending)return;
+        if(ocrBusy){main.postDelayed(confirmStableFrame,650);return;}
+        // A static screen may supply only one buffer. Confirm with a fresh buffer, not a timeout guess.
+        if(SystemClock.elapsedRealtime()-lastFrameRequest>=650){
+            lastFrame=0;requestFreshFrame();
+            QaLog.event("STABILITY request=fresh_confirmation_frame");
+        }
+        // A throttled request or asynchronous OCR must not strand the one-shot confirmation.
+        main.postDelayed(confirmStableFrame,650);
+    }
     private WindowManager windows;
     private MediaProjection projection;
     private VirtualDisplay display;
@@ -53,12 +67,12 @@ public final class CaptureService extends Service {
         currentAnswer=value;
         UiObserver observer=uiObserver.get();if(observer!=null)observer.onAnswerChanged();
     }
-    private Button inlineCopy;
+    private ImageButton inlineCopy,popupCopy;
     private ImageButton toggle,autoButton,fold;
     private ImageView bubbleIcon;
-    private LoadingRingView bubbleRing;
+    private LoadingRingView bubbleRing,panelRing;
     private FrameLayout bubble;
-    private LinearLayout answerPopup;
+    private AnswerChatView answerPopup;
     private WindowManager.LayoutParams bubbleParams,popupParams;
     private WindowManager.LayoutParams panelParams;
     private RegionSelector selector;
@@ -66,6 +80,10 @@ public final class CaptureService extends Service {
     private WindowManager.LayoutParams outlineParams;
     private ScreenDocument latestDocument;
     private ScreenDocument latestOcrDocument;
+    private NextOverlayView nextOverlay;
+    private WindowManager.LayoutParams nextOverlayParams;
+    private boolean manualNextRequested,manualNextBusy;
+    private long manualNextStarted;
     private long latestOcrAt,nodesScanningSince=-1;
     private ScreenDocument navigationFrame;
     private ScreenDocument.Line navigationTarget;
@@ -84,7 +102,17 @@ public final class CaptureService extends Service {
     private PendingTap rootTapPending;
     private VisionTapFallback visionTapFallback;
     private String fullAnswer="",shortAnswer="",copyAnswer="";
-    private static final long MIN_ANSWER_VISIBLE_MS=4500;
+    private long answerVisibleUntil;
+    private boolean answerTouching,answerAutoCopied,answerDismissed;
+    private final Runnable dismissAnswer=new Runnable(){
+        @Override public void run(){
+            if(answerPopup!=null&&!answerTouching){
+                long remaining=answerVisibleUntil-SystemClock.elapsedRealtime();
+                if(remaining>0)main.postDelayed(this,remaining);
+                else resumeAfterAnswer();
+            }
+        }
+    };
     private enum AutoState { IDLE, DETECTING, REQUESTING_AI, RESOLVING_TARGET,
         CLICKING_ANSWER, FILLING_TEXT, WAITING_PAGE_CHANGE, FINDING_NEXT, SCROLLING, STOPPED }
     private AutoState autoState=AutoState.IDLE;
@@ -146,6 +174,7 @@ public final class CaptureService extends Service {
         if(autoState!=next)QaLog.event("STATE "+autoState+" -> "+next+" reason="+reason+
                 " question="+shortId(currentQuestionKey));
         autoState=next;
+        if(bubble!=null)renderBubble();
     }
     private static String shortId(String key){return key.isEmpty()?"none":Integer.toHexString(key.hashCode());}
     private static String safeAnswer(String answer) {
@@ -177,6 +206,9 @@ public final class CaptureService extends Service {
         if(intent!=null&&"STRATEGY".equals(intent.getAction())) {
             autoAnswerStrategy=new Settings(this).strategy();QaLog.event("STRATEGY changed="+autoAnswerStrategy);
             return START_NOT_STICKY;
+        }
+        if(intent!=null&&"NEXT_OVERLAY".equals(intent.getAction())){
+            if(active)updateNextOverlay();return START_NOT_STICKY;
         }
         if(intent!=null&&"MANUAL_SELECT".equals(intent.getAction())) {
             if(active&&selector==null)select();
@@ -217,7 +249,7 @@ public final class CaptureService extends Service {
             readerCreatedAt=SystemClock.elapsedRealtime();reader=newReader(width,height);
             display=projection.createVirtualDisplay("ScreenQA",width,height,dpi,
                     DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,reader.getSurface(),null,main);
-            createPanel(); active=true;ScreenQaAccessibilityService.setTracking(true);
+            createPanel();updateNextOverlay(); active=true;ScreenQaAccessibilityService.setTracking(true);
             main.postDelayed(this::monitorStatus,5000);main.postDelayed(this::pollFrames,700);
             setAutoState(AutoState.DETECTING,"capture_started");
         } catch(Exception e) {
@@ -310,6 +342,7 @@ public final class CaptureService extends Service {
         TextView handle=new TextView(this); handle.setText(getString(R.string.overlay_drag_handle,getString(R.string.app_name))); handle.setTextSize(14);
         handle.setTypeface(null,Typeface.BOLD);handle.setPadding(dp(2),dp(8),0,dp(8));
         header.addView(handle,new LinearLayout.LayoutParams(0,dp(40),1));
+        panelRing=new LoadingRingView(this);header.addView(panelRing,new LinearLayout.LayoutParams(dp(24),dp(24)));
         ImageButton minimize=iconButton(header,R.drawable.ic_minimize,"缩小悬浮窗");minimize.setOnClickListener(v -> setMinimized(true));
         status=new TextView(this); status.setTextSize(12);status.setTypeface(null,Typeface.BOLD);
         status.setText("自动模式 · 切到题目页面后点开始");status.setPadding(dp(11),dp(8),dp(11),dp(8));
@@ -320,9 +353,11 @@ public final class CaptureService extends Service {
         answer.setLineSpacing(dp(4),1); answerBox.addView(answer);
         panel.addView(answerBox,new LinearLayout.LayoutParams(-1,dp(112)));
         answerBox.setVisibility(View.GONE);
-        inlineCopy=new Button(this);inlineCopy.setText("复制答案");inlineCopy.setTextSize(13);
+        inlineCopy=new ImageButton(this);inlineCopy.setImageResource(R.drawable.ic_copy);
+        inlineCopy.setContentDescription("复制答案");inlineCopy.setPadding(dp(12),dp(12),dp(12),dp(12));
         inlineCopy.setVisibility(View.GONE);inlineCopy.setOnClickListener(v -> copyCurrentAnswer());
-        panel.addView(inlineCopy,new LinearLayout.LayoutParams(-1,dp(38)));
+        LinearLayout.LayoutParams copyLayout=new LinearLayout.LayoutParams(dp(48),dp(48));
+        copyLayout.gravity=Gravity.END;panel.addView(inlineCopy,copyLayout);
         LinearLayout buttons=new LinearLayout(this); buttons.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams buttonLayout=new LinearLayout.LayoutParams(-1,-2);buttonLayout.topMargin=dp(3);
         panel.addView(buttons,buttonLayout);
@@ -332,7 +367,7 @@ public final class CaptureService extends Service {
             showState(OverlayState.SEARCHING,"自动找题中 · 请把悬浮窗移开题目","等待识别题干、题型和范围…");lastFrame=0;
         });
         fold=iconButton(buttons,R.drawable.ic_article,"查看答案"); fold.setOnClickListener(v -> {
-            if(!fullAnswer.isEmpty())openAnswerPopup(); else {collapsed=!collapsed;answerBox.setVisibility(collapsed?View.GONE:View.VISIBLE);}
+            if(!fullAnswer.isEmpty()){answerDismissed=false;openAnswerPopup();} else {collapsed=!collapsed;answerBox.setVisibility(collapsed?View.GONE:View.VISIBLE);}
         });
         iconButton(buttons,R.drawable.ic_settings,"打开设置").setOnClickListener(v -> {
             Intent open=new Intent(this,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
@@ -345,8 +380,8 @@ public final class CaptureService extends Service {
         windows.addView(panel,panelParams);
         bubble=new FrameLayout(this);bubble.setElevation(dp(16));
         bubbleIcon=new ImageView(this);bubbleIcon.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        FrameLayout.LayoutParams iconLp=new FrameLayout.LayoutParams(dp(26),dp(26),Gravity.CENTER);bubble.addView(bubbleIcon,iconLp);
-        bubbleRing=new LoadingRingView(this);FrameLayout.LayoutParams ringLp=new FrameLayout.LayoutParams(dp(38),dp(38),Gravity.CENTER);bubble.addView(bubbleRing,ringLp);
+        FrameLayout.LayoutParams iconLp=new FrameLayout.LayoutParams(dp(42),dp(42),Gravity.CENTER);bubble.addView(bubbleIcon,iconLp);
+        bubbleRing=new LoadingRingView(this);FrameLayout.LayoutParams ringLp=new FrameLayout.LayoutParams(dp(54),dp(54),Gravity.CENTER);bubble.addView(bubbleRing,ringLp);
         bubbleText=new TextView(this);bubbleText.setGravity(Gravity.CENTER);bubbleText.setTextSize(15);
         bubbleText.setTypeface(null,Typeface.BOLD);bubbleText.setMaxLines(2);
         bubbleText.setEllipsize(android.text.TextUtils.TruncateAt.END);
@@ -370,10 +405,9 @@ public final class CaptureService extends Service {
             }
         });
         bubble.setOnClickListener(v -> {
-            if(overlayState==OverlayState.ANSWER && !fullAnswer.isEmpty() && needsPopup(shortAnswer))openAnswerPopup();
-            else {setMinimized(false);if(overlayState==OverlayState.ERROR){
+            setMinimized(false);if(overlayState==OverlayState.ERROR){
                 paused=true;updateToggleIcon();collapsed=false;answerBox.setVisibility(View.VISIBLE);
-            }}
+            }
         });
         handle.setOnTouchListener(new View.OnTouchListener() {
             float x,y; int startX,startY;
@@ -421,7 +455,7 @@ public final class CaptureService extends Service {
         panel.setBackground(bordered(surfaceColor,24,palette.border));
         answerBox.setBackground(rounded(answerFill(),17));
         answer.setTextColor(foregroundColor);
-        if(inlineCopy!=null){inlineCopy.setTextColor(accentColor);inlineCopy.setBackground(rounded(answerFill(),12));}
+        if(inlineCopy!=null){inlineCopy.setImageTintList(ColorStateList.valueOf(accentColor));inlineCopy.setBackground(rounded(answerFill(),12));}
         tintIcons(panel,foregroundColor);
         LinearLayout header=(LinearLayout)panel.getChildAt(0);
         ((TextView)header.getChildAt(0)).setTextColor(foregroundColor);
@@ -430,9 +464,9 @@ public final class CaptureService extends Service {
             for(int j=0;j<row.getChildCount();j++)if(row.getChildAt(j) instanceof ImageButton)
                 row.getChildAt(j).setBackground(rounded(ThemePalette.alpha(accentColor,0.12f),15));
         }
-        if(answerPopup!=null)answerPopup.setBackground(bordered(surfaceColor,23,palette.border));
-        if(popupText!=null){popupText.setTextColor(foregroundColor);
-            popupText.setBackground(rounded(answerFill(),17));}
+        if(answerPopup!=null){answerPopup.setFill(controlColor);tintIcons(answerPopup,foregroundColor);}
+        if(popupCopy!=null)popupCopy.setImageTintList(ColorStateList.valueOf(accentColor));
+        if(popupText!=null)popupText.setTextColor(foregroundColor);
         if(popupTitle!=null)popupTitle.setTextColor(accentColor);
         updateToggleIcon();
         renderBubble();
@@ -453,43 +487,51 @@ public final class CaptureService extends Service {
         showAnswer(label,detail,message,"");
     }
     private void showAnswer(String label,String detail,String message,String copy) {
-        String key=currentQuestionKey;int displayEpoch=epoch;
-        long remaining=MIN_ANSWER_VISIBLE_MS-(SystemClock.elapsedRealtime()-answerShownAt);
-        if(!fullAnswer.isEmpty()&&!visibleQuestionKey.equals(key)&&remaining>0) {
-            QaLog.event("ANSWER_UI deferred_ms="+remaining+" next_question="+shortId(key));
-            main.postDelayed(() -> {
-                if(!destroyed&&!paused&&displayEpoch==epoch&&currentQuestionKey.equals(key))
-                    applyAnswer(label,detail,message,key,copy);
-            },remaining);
-            return;
-        }
-        applyAnswer(label,detail,message,key,copy);
+        applyAnswer(label,detail,message,currentQuestionKey,copy);
     }
     private void applyAnswer(String label,String detail,String message,String key,String copy) {
-        if(!visibleQuestionKey.equals(key))closeAnswerPopup(false);
+        closeAnswerPopup(false);
+        answerDismissed=false;
         overlayState=OverlayState.ANSWER;shortAnswer=label.trim();fullAnswer=detail.trim();copyAnswer=copy;
+        answerAutoCopied=!copy.isEmpty()&&copyCurrentAnswer(false);
         inlineCopy.setVisibility(copy.isEmpty()?View.GONE:View.VISIBLE);
         answerShownAt=SystemClock.elapsedRealtime();visibleQuestionKey=key;
-        QaLog.event("ANSWER_UI shown question="+shortId(key)+" min_visible_ms="+MIN_ANSWER_VISIBLE_MS);
+        QaLog.event("ANSWER_UI shown question="+shortId(key)+" visible_ms="+answerVisibleMillis());
         status.setText(message);answer.setText(fullAnswer);
         publishAnswer(fullAnswer);
         if(!minimized)setMinimized(true);
         renderBubble();
+        // An active touch finishes first so the new card cannot obscure its verification targets.
+        // Both success and failure callbacks open it automatically; no avatar tap is required.
         if(needsPopup(shortAnswer)&&!tapInFlight&&!textInputInFlight)openAnswerPopup();
     }
-    private boolean needsPopup(String value) { return !inlineChoice && !fullAnswer.isEmpty(); }
+    private boolean needsPopup(String value) { return !fullAnswer.isEmpty(); }
+    private long answerVisibleMillis(){return AnswerPresentation.visibleMillis(fullAnswer,!copyAnswer.isEmpty());}
+    private void extendAnswerVisibility(){
+        main.removeCallbacks(dismissAnswer);
+        answerVisibleUntil=SystemClock.elapsedRealtime()+answerVisibleMillis();
+        if(answerPopup!=null&&!answerTouching)main.postDelayed(dismissAnswer,answerVisibleMillis());
+    }
+    private boolean holdingAnswer(){
+        return answerPopup!=null&&(answerTouching||SystemClock.elapsedRealtime()<answerVisibleUntil);
+    }
     private void copyCurrentAnswer() {
-        QaLog.event("CopyAnswer clicked answer_length="+copyAnswer.length());
-        if(copyAnswer.isEmpty())return;
+        copyCurrentAnswer(true);extendAnswerVisibility();
+    }
+    private boolean copyCurrentAnswer(boolean manual) {
+        String payload=copyAnswer.isEmpty()?fullAnswer:copyAnswer;
+        if(payload.isEmpty())return false;
         try {
             ClipboardManager clipboard=(ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
             if(clipboard==null)throw new IllegalStateException("clipboard_unavailable");
-            clipboard.setPrimaryClip(ClipData.newPlainText("答案",copyAnswer));
-            QaLog.event("Clipboard copy success answer_length="+copyAnswer.length());
-            Toast.makeText(this,"已复制",Toast.LENGTH_SHORT).show();
+            clipboard.setPrimaryClip(ClipData.newPlainText("答案",payload));
+            QaLog.event("Clipboard copy success source="+(manual?"manual":"auto")+" answer_length="+payload.length());
+            if(manual)Toast.makeText(this,"已复制",Toast.LENGTH_SHORT).show();
+            return true;
         } catch(Exception e) {
             QaLog.event("Clipboard copy failed reason="+e.getClass().getSimpleName());
-            Toast.makeText(this,"复制失败，请长按答案复制",Toast.LENGTH_SHORT).show();
+            if(manual)Toast.makeText(this,"复制失败，请长按答案复制",Toast.LENGTH_SHORT).show();
+            return false;
         }
     }
     private void renderBubble() {
@@ -497,28 +539,30 @@ public final class CaptureService extends Service {
         ThemePalette p=theme();
         boolean showingAnswer=overlayState==OverlayState.ANSWER;
         boolean error=overlayState==OverlayState.ERROR;
-        bubbleRing.setRunning(minimized && (overlayState==OverlayState.SEARCHING||overlayState==OverlayState.ANALYZING));
-        bubbleRing.setRingColor(p.accent);
+        boolean loading=!paused&&(manualNextRequested||manualNextBusy||
+                (autoMode&&selector==null&&!holdingAnswer()&&overlayState!=OverlayState.ERROR)||
+                overlayState==OverlayState.SEARCHING||overlayState==OverlayState.ANALYZING||
+                autoState==AutoState.DETECTING||autoState==AutoState.REQUESTING_AI||
+                autoState==AutoState.CLICKING_ANSWER||autoState==AutoState.FILLING_TEXT||
+                autoState==AutoState.WAITING_PAGE_CHANGE||autoState==AutoState.FINDING_NEXT||autoState==AutoState.SCROLLING);
+        bubbleRing.setRingColor(showingAnswer?p.onAccent:p.accent);
+        bubbleRing.setRunning(minimized&&loading);
+        panelRing.setRingColor(p.accent);panelRing.setRunning(!minimized&&loading);
         bubble.setBackground(bordered(showingAnswer?accentColor:controlColor,30,
                 showingAnswer?ThemePalette.blend(accentColor,p.onAccent,0.42f):p.border));
         bubbleText.setTextColor(showingAnswer?p.onAccent:foregroundColor);
         status.setTextColor(error?p.danger:accentColor);
         status.setBackground(rounded(error?ThemePalette.alpha(p.danger,0.16f):ThemePalette.alpha(accentColor,0.14f),13));
-        bubbleText.setVisibility(overlayState==OverlayState.ANSWER?View.VISIBLE:View.GONE);
-        bubbleIcon.setVisibility(overlayState==OverlayState.ANSWER?View.GONE:View.VISIBLE);
-        if(overlayState==OverlayState.ANSWER){
-            String preview=shortAnswer.isEmpty()?"答案":shortAnswer;
-            bubbleText.setTextSize(preview.length()>3?12:24);
-            bubbleText.setText(preview.length()>8?preview.substring(0,8)+"…":preview);
-        } else {
-            int icon=error?R.drawable.ic_error:
-                    overlayState==OverlayState.PAUSED?R.drawable.ic_pause:
-                    overlayState==OverlayState.IDLE?R.drawable.ic_app:R.drawable.ic_auto;
-            bubbleIcon.setImageResource(icon);
-            bubbleIcon.setImageTintList(ColorStateList.valueOf(error?p.danger:foregroundColor));
-        }
+        bubbleText.setVisibility(loading?View.VISIBLE:View.GONE);
+        bubbleText.setText(nextPending||manualNextRequested||manualNextBusy?"下题":overlayState==OverlayState.ANALYZING?"分析":"识题");
+        bubbleText.setTextSize(9);bubbleText.setTextColor(p.foreground);
+        bubbleText.setBackground(rounded(p.surface,6));
+        bubbleText.setLayoutParams(new FrameLayout.LayoutParams(dp(26),dp(16),Gravity.BOTTOM|Gravity.RIGHT));
+        bubbleIcon.setVisibility(View.VISIBLE);
+        bubbleIcon.setImageResource(R.drawable.brand_mascot);
+        bubbleIcon.setImageTintList(null);
         bubble.setContentDescription(error?"识别或分析出错，点击查看原因":
-                overlayState==OverlayState.ANSWER?"已得出答案，点击查看详情":"大学生小帮手，点击展开");
+                loading?"正在"+(nextPending?"判断下一题":overlayState==OverlayState.ANALYZING?"分析答案":"识别题目")+"，点击展开控制面板":"大学生小帮手，点击展开控制面板");
     }
     private void setMinimized(boolean value) {
         if(panel==null||bubble==null)return;
@@ -531,54 +575,78 @@ public final class CaptureService extends Service {
         renderBubble();positionAnswerPopup();
     }
     private void openAnswerPopup() {
-        if(fullAnswer.isEmpty()||answerPopup!=null||inlineChoice)return;
-        answerPopup=new LinearLayout(this);answerPopup.setOrientation(LinearLayout.VERTICAL);
-        answerPopup.setPadding(dp(14),dp(12),dp(14),dp(14));answerPopup.setElevation(dp(16));
+        if(fullAnswer.isEmpty()||answerPopup!=null||answerDismissed)return;
+        answerPopup=new AnswerChatView(this,touching->{answerTouching=touching;extendAnswerVisibility();});
+        answerPopup.setElevation(dp(16));
         LinearLayout top=new LinearLayout(this);top.setGravity(Gravity.CENTER_VERTICAL);answerPopup.addView(top);
-        TextView title=new TextView(this);title.setText(overlayState==OverlayState.ERROR?"报错详情":"答案");
-        title.setTextSize(14);title.setTypeface(null,android.graphics.Typeface.BOLD);popupTitle=title;
-        top.addView(title,new LinearLayout.LayoutParams(0,dp(42),1));
-        if(!copyAnswer.isEmpty()) {
-            Button copy=new Button(this);copy.setText("复制");copy.setTextSize(13);
-            copy.setTextColor(accentColor);copy.setOnClickListener(v -> copyCurrentAnswer());
-            top.addView(copy,new LinearLayout.LayoutParams(dp(72),dp(42)));
-        }
-        ImageButton close=iconButton(top,R.drawable.ic_close,"关闭详情");close.setOnClickListener(v -> closeAnswerPopup(true));
         ScrollView scroll=new ScrollView(this);scroll.setFillViewport(false);
-        popupText=new TextView(this);popupText.setText(fullAnswer);popupText.setTextSize(19);
-        popupText.setTypeface(null,Typeface.BOLD);popupText.setPadding(dp(15),dp(14),dp(15),dp(15));
-        popupText.setLineSpacing(dp(5),1);popupText.setTextIsSelectable(true);scroll.addView(popupText);
-        answerPopup.addView(scroll,new LinearLayout.LayoutParams(-1,-2));
-        popupParams=new WindowManager.LayoutParams(Math.min(dp(340),width-dp(24)),WindowManager.LayoutParams.WRAP_CONTENT,
+        popupText=new TextView(this);popupText.setText(fullAnswer);popupText.setTextSize(15);
+        popupText.setPadding(0,dp(4),dp(4),dp(4));popupText.setLineSpacing(dp(3),1);
+        popupText.setTextIsSelectable(true);scroll.addView(popupText);
+        top.addView(scroll,new LinearLayout.LayoutParams(0,-2,1));
+        LinearLayout controls=new LinearLayout(this);controls.setOrientation(LinearLayout.VERTICAL);
+        controls.setGravity(Gravity.TOP);top.setGravity(Gravity.TOP);top.addView(controls,new LinearLayout.LayoutParams(dp(36),-2));
+        popupCopy=iconButton(controls,R.drawable.ic_copy,answerAutoCopied?"已自动复制，点击再次复制":"复制答案");
+        popupCopy.setPadding(dp(9),dp(9),dp(9),dp(9));popupCopy.setBackgroundColor(Color.TRANSPARENT);
+        popupCopy.setLayoutParams(new LinearLayout.LayoutParams(dp(36),dp(36)));
+        popupCopy.setImageTintList(ColorStateList.valueOf(accentColor));
+        popupCopy.setOnClickListener(v -> copyCurrentAnswer());
+        ImageButton close=iconButton(controls,R.drawable.ic_close,"关闭答案并继续识别");close.setOnClickListener(v -> resumeAfterAnswer());
+        close.setBackgroundColor(Color.TRANSPARENT);
+        close.setPadding(dp(9),dp(9),dp(9),dp(9));close.setLayoutParams(new LinearLayout.LayoutParams(dp(36),dp(36)));
+        popupParams=new WindowManager.LayoutParams(Math.min(dp(AnswerPresentation.bubbleWidthDp(fullAnswer)),width-dp(24)),WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,PixelFormat.TRANSLUCENT);
         popupParams.gravity=Gravity.TOP|Gravity.LEFT;
         windows.addView(answerPopup,popupParams);
         answerPopup.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or,ob) -> positionAnswerPopup());
         positionAnswerPopup();
-        answerPopup.setBackground(bordered(surfaceColor,23,theme().border));
-        title.setTextColor(accentColor);popupText.setTextColor(foregroundColor);
-        popupText.setBackground(rounded(answerFill(),17));
+        answerPopup.setFill(controlColor);
+        popupText.setTextColor(foregroundColor);
+        popupText.setBackgroundColor(Color.TRANSPARENT);
         close.setImageTintList(ColorStateList.valueOf(foregroundColor));
-        // Answer stays visible until the next question or explicit user action.
+        extendAnswerVisibility();
+        QaLog.event("ANSWER_UI popup=expanded question="+shortId(visibleQuestionKey));
+        if(!new Settings(this).reduceMotion()){
+            answerPopup.setPivotX(popupParams.x>=bubbleParams.x?0:popupParams.width);
+            answerPopup.setScaleX(0.75f);answerPopup.setAlpha(0f);
+            answerPopup.setTranslationX(popupParams.x>=bubbleParams.x?-dp(16):dp(16));
+            answerPopup.animate().translationX(0f).scaleX(1f).alpha(1f).setDuration(180)
+                    .setInterpolator(new android.view.animation.DecelerateInterpolator()).start();
+        }
     }
     private void positionAnswerPopup() {
         if(answerPopup==null)return;
+        Rect bounds=contentBounds(width,height);
         int anchorX=minimized?bubbleParams.x:panelParams.x;
         int anchorY=minimized?bubbleParams.y:panelParams.y;
+        int anchorWidth=minimized?dp(60):panel.getWidth();
         int anchorHeight=minimized?dp(60):panel.getHeight();
-        int gap=dp(6),top=Math.max(dp(24),insetTop),bottom=height-Math.max(dp(24),insetBottom);
-        int below=bottom-anchorY-anchorHeight-gap,above=anchorY-top-gap;
-        boolean under=below>=Math.min(dp(220),Math.max(dp(110),answerPopup.getMeasuredHeight()))||below>=above;
-        int room=Math.max(dp(64),under?below:above);
-        int limit=Math.min((int)(height*0.65f),room);
-        answerPopup.measure(View.MeasureSpec.makeMeasureSpec(popupParams.width,View.MeasureSpec.EXACTLY),
+        int gap=dp(4),left=bounds.left+dp(6),right=bounds.right-dp(6);
+        int top=bounds.top+dp(6),bottom=bounds.bottom-dp(6);
+        int desired=Math.min(dp(AnswerPresentation.bubbleWidthDp(fullAnswer)),right-left);
+        int rightRoom=right-anchorX-anchorWidth-gap,leftRoom=anchorX-gap-left;
+        boolean toRight=rightRoom>=desired||rightRoom>=dp(144);
+        boolean beside=toRight||leftRoom>=dp(144);
+        int w=beside?Math.min(desired,toRight?rightRoom:leftRoom):desired;
+        int limit=Math.max(dp(80),Math.min((int)(height*0.6f),bottom-top));
+        int x,y;
+        if(beside){
+            x=toRight?anchorX+anchorWidth+gap:anchorX-gap-w;y=anchorY;
+        }else{
+            int below=bottom-anchorY-anchorHeight-gap,above=anchorY-top-gap;
+            boolean under=below>=above;
+            limit=Math.min(limit,Math.max(dp(80),under?below:above));
+            x=Math.max(left,Math.min(right-w,anchorX));
+            y=under?anchorY+anchorHeight+gap:anchorY-limit-gap;
+        }
+        answerPopup.setTailOnLeft(!beside||toRight);
+        answerPopup.measure(View.MeasureSpec.makeMeasureSpec(w,View.MeasureSpec.EXACTLY),
                 View.MeasureSpec.makeMeasureSpec(limit,View.MeasureSpec.AT_MOST));
         int h=Math.min(limit,answerPopup.getMeasuredHeight());
-        int x=Math.max(dp(8),Math.min(width-popupParams.width-dp(8),anchorX));
-        int y=under?anchorY+anchorHeight+gap:anchorY-h-gap;
         y=Math.max(top,Math.min(bottom-h,y));
-        if(popupParams.x==x&&popupParams.y==y&&popupParams.height==h)return;
-        popupParams.x=x;popupParams.y=y;popupParams.height=h;
+        answerPopup.setTailCenter(anchorY+anchorHeight/2f-y);
+        if(popupParams.x==x&&popupParams.y==y&&popupParams.height==h&&popupParams.width==w)return;
+        popupParams.x=x;popupParams.y=y;popupParams.height=h;popupParams.width=w;
         windows.updateViewLayout(answerPopup,popupParams);
     }
     private Rect contentBounds(int w,int h) {
@@ -607,10 +675,24 @@ public final class CaptureService extends Service {
         return new Rect(insetLeft,insetTop,w-insetRight,h-insetBottom);
     }
     private void closeAnswerPopup(boolean resume) {
-        if(answerPopup!=null){try{windows.removeView(answerPopup);}catch(Exception ignored){}answerPopup=null;popupText=null;popupTitle=null;}
+        main.removeCallbacks(dismissAnswer);answerTouching=false;answerVisibleUntil=0;
+        if(answerPopup!=null){answerPopup.animate().cancel();try{windows.removeView(answerPopup);}catch(Exception ignored){}answerPopup=null;popupText=null;popupTitle=null;popupCopy=null;}
         if(resume)lastFrame=0;
     }
+    private void resumeAfterAnswer(){
+        answerDismissed=true;closeAnswerPopup(false);
+        if(destroyed)return;
+        paused=false;lastFrame=0;updateToggleIcon();
+        overlayState=OverlayState.SEARCHING;
+        status.setText(nextPending?"已关闭答案 · 继续判断下一题":"已关闭答案 · 继续识别题目");
+        if(!nextPending)setAutoState(AutoState.DETECTING,"answer_closed_resume_monitoring");
+        renderBubble();requestFreshFrame();
+        QaLog.event("ANSWER_UI dismissed resume_monitoring=true next_pending="+nextPending);
+    }
     private void invalidateQuestion() {
+        manualNextRequested=false;manualNextBusy=false;
+        if(nextOverlay!=null){nextOverlay.setText("下题 ›");nextOverlay.setEnabled(true);}
+        main.removeCallbacks(confirmStableFrame);stabilityWaitStartedAt=0;
         answerRetry=null;
         actionProof.observe(SystemClock.elapsedRealtime(),false);
         epoch++;tracker.reset(); if(request!=null) {request.cancel();request=null;}
@@ -662,6 +744,80 @@ public final class CaptureService extends Service {
         int[] xy=new int[2];answerPopup.getLocationOnScreen(xy);
         return new Rect(xy[0]-dp(5),xy[1]-dp(5),xy[0]+answerPopup.getWidth()+dp(5),xy[1]+answerPopup.getHeight()+dp(5));
     }
+    private Rect nextOverlayRect(){
+        if(nextOverlay==null)return new Rect();
+        int[] xy=new int[2];nextOverlay.getLocationOnScreen(xy);
+        return new Rect(xy[0]-dp(4),xy[1]-dp(4),xy[0]+nextOverlay.getWidth()+dp(4),xy[1]+nextOverlay.getHeight()+dp(4));
+    }
+    private void updateNextOverlay(){
+        if(!new Settings(this).nextOverlay()){
+            if(manualNextRequested)manualNextFinished("已关闭下一题小窗 · 继续识题");
+            if(nextOverlay!=null){windows.removeView(nextOverlay);nextOverlay=null;}return;
+        }
+        if(nextOverlay!=null)return;
+        nextOverlayParams=new WindowManager.LayoutParams(dp(48),dp(48),WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,PixelFormat.TRANSLUCENT);
+        nextOverlayParams.gravity=Gravity.TOP|Gravity.LEFT;
+        nextOverlayParams.x=Math.max(dp(8),width-dp(60));nextOverlayParams.y=Math.max(dp(80),height/2);
+        nextOverlay=new NextOverlayView(this,(x,y)->{
+            Rect bounds=contentBounds(width,height);
+            nextOverlayParams.x=Math.max(bounds.left,Math.min(bounds.right-dp(48),nextOverlayParams.x+x));
+            nextOverlayParams.y=Math.max(bounds.top,Math.min(bounds.bottom-dp(48),nextOverlayParams.y+y));
+            windows.updateViewLayout(nextOverlay,nextOverlayParams);
+        });
+        nextOverlay.setOnClickListener(v->requestManualNext());
+        windows.addView(nextOverlay,nextOverlayParams);
+    }
+    private void manualNextFinished(String message){
+        manualNextRequested=false;manualNextBusy=false;
+        if(nextOverlay!=null){nextOverlay.setText("下题 ›");nextOverlay.setEnabled(true);}
+        setAutoState(AutoState.DETECTING,"manual_next_resume_monitoring");
+        showState(OverlayState.SEARCHING,message,"正在监测题目变化…");lastFrame=0;requestFreshFrame();
+    }
+    private void requestManualNext(){
+        if(destroyed||selector!=null||manualNextRequested||manualNextBusy)return;
+        if(tapInFlight||textInputInFlight||navigationTouchBusy||rootTapPending!=null){
+            Toast.makeText(this,"当前操作尚未结束，请稍后点下一题",Toast.LENGTH_SHORT).show();return;
+        }
+        if(!TouchExecutor.available(this)){
+            Toast.makeText(this,"切题需要启用无障碍服务或已授权的 Root",Toast.LENGTH_LONG).show();return;
+        }
+        epoch++;if(request!=null){request.cancel();request=null;}tracker.reset();
+        nextPending=false;navigationTarget=null;pendingTap=null;visionTapFallback=null;
+        answerDismissed=true;closeAnswerPopup(false);clearOutline();setMinimized(true);
+        paused=false;autoMode=true;updateToggleIcon();
+        manualNextRequested=true;manualNextStarted=SystemClock.elapsedRealtime();
+        if(nextOverlay!=null){nextOverlay.setText("查找…");nextOverlay.setEnabled(false);}
+        setAutoState(AutoState.FINDING_NEXT,"manual_next_requested");
+        showState(OverlayState.SEARCHING,"正在查找屏幕上的下一题按钮","手动切题 · 正在读取新画面…");
+        lastFrame=0;requestFreshFrame();final int generation=epoch;
+        main.postDelayed(()->{if(!destroyed&&generation==epoch&&manualNextRequested)
+            manualNextFinished("未读到新画面 · 请重试下一题");},3500);
+    }
+    private void manualNextObserved(ScreenDocument doc,long observedAt){
+        if(observedAt<manualNextStarted){lastFrame=0;requestFreshFrame();return;}
+        ScreenDocument.Line target=NavigationPolicy.uniqueNext(doc);
+        if(target==null){manualNextFinished(NavigationPolicy.terminalVisible(doc)?"已到末题 · 请自行确认提交":"未找到唯一下一题按钮 · 请先滚动露出按钮再点小窗");return;}
+        Rect box=new Rect(target.left,target.top,target.right,target.bottom);
+        if(Rect.intersects(box,panelRect())||Rect.intersects(box,popupRect())||Rect.intersects(box,nextOverlayRect())){
+            manualNextFinished("下一题按钮被悬浮窗遮住 · 请拖开后重试");return;
+        }
+        manualNextRequested=false;manualNextBusy=true;
+        navigationFrame=doc;navigationChecks=java.util.Collections.singletonList(target);
+        actionProof.observe(SystemClock.elapsedRealtime(),true);
+        final int generation=epoch;final long created=SystemClock.elapsedRealtime();
+        java.util.function.BooleanSupplier allowed=()->!destroyed&&!paused&&generation==epoch&&manualNextBusy&&
+                new Settings(this).nextOverlay()&&SystemClock.elapsedRealtime()-created<2500;
+        TouchAction action=TouchAction.tap(box.centerX(),box.centerY(),width,height);
+        ScreenQaAccessibilityService service=ScreenQaAccessibilityService.active;
+        Rect control=panelRect(),popup=popupRect();
+        TouchExecutor.executeAsync(this,action,()->verifyActionFrame(doc,navigationChecks,allowed),
+                service==null?null:()->service.ocrNode(target,control,popup,allowed),outcome->{
+            if(destroyed||generation!=epoch)return;
+            QaLog.event("MANUAL_NEXT accepted="+outcome.accepted+" uncertain="+outcome.uncertain);
+            manualNextFinished(outcome.accepted?"已发送下一题操作 · 正在继续识题":outcome.uncertain?"切题结果不确定 · 请查看页面后再操作":"下一题未执行 · 请露出按钮后重试");
+        });
+    }
     private void clearOutline() {
         if(outline!=null) {try {windows.removeView(outline);}catch(Exception ignored){}outline=null;}
     }
@@ -687,7 +843,7 @@ public final class CaptureService extends Service {
             image=source.acquireLatestImage();
             if(image!=null)lastFrameArrival=SystemClock.elapsedRealtime();
             if(image==null || destroyed || paused || selector!=null || (!autoMode && region==null))return;
-            if(rootTapPending!=null||navigationTouchBusy){
+            if(rootTapPending!=null||navigationTouchBusy||manualNextBusy){
                 // Keep draining while su/gesture waits, so the producer cannot freeze on queued old frames.
                 // Observe only the current action's pixels; do not feed transient selection styling back into AI.
                 boolean same=rootTapPending!=null?matchesFrame(image,rootTapPending.doc,linesFor(rootTapPending)):
@@ -697,6 +853,8 @@ public final class CaptureService extends Service {
             if(navigationTarget!=null){finishNavigationTap(image);return;}
             if(pendingTap!=null){finishPendingTap(image);return;}
             if(ocrBusy)return;
+            // Preserve the reading/copy window. Explicit auto-next keeps its existing action guards.
+            if(!nextPending&&!manualNextRequested&&holdingAnswer())return;
             long now=SystemClock.elapsedRealtime();
             VisionTapFallback fallback=visionTapFallback;
             if(fallback!=null&&now-fallback.created>=3000) {
@@ -704,7 +862,7 @@ public final class CaptureService extends Service {
             }
             if(fallback==null&&now-lastFrame<650)return;
             Rect overlay=panelRect(),popup=popupRect();
-            if(fallback==null&&autoMode&&autoAnswerStrategy.readNodesFirst()&&
+            if(fallback==null&&!manualNextRequested&&autoMode&&autoAnswerStrategy.readNodesFirst()&&
                     !(nextPending&&scrollAttempts>0&&navigationAttempts==0)) {
                 ScreenQaAccessibilityService.Snapshot nodes=ScreenQaAccessibilityService.current();
                 if(nodes!=null) {
@@ -720,10 +878,6 @@ public final class CaptureService extends Service {
                     }
                 }
             }
-            if(autoMode&&!popup.isEmpty()&&now-answerShownAt>=MIN_ANSWER_VISIBLE_MS) {
-                closeAnswerPopup(false);popup=new Rect();
-                QaLog.event("ANSWER_UI collapsed reason=resume_question_monitoring");
-            }
             if(!autoMode && (Rect.intersects(region,overlay)||Rect.intersects(region,popup)))return;
             final boolean automatic=autoMode;
             final Rect crop=automatic?contentBounds(image.getWidth(),image.getHeight()):new Rect(region);
@@ -734,7 +888,8 @@ public final class CaptureService extends Service {
             final int screenWidth=width,screenHeight=height;
             ocrBusy=true;lastFrame=now;ocrStartedAt=now;nodesScanningSince=-1;
             QaLog.event("OCR start source="+(automatic?"automatic":"manual")+" question="+shortId(currentQuestionKey));
-            imaging.execute(() -> processFrame(captured,crop,overlay,capturedPopup,automatic,snapshotEpoch,screenWidth,screenHeight));
+            final Rect capturedNext=nextOverlayRect();
+            imaging.execute(() -> processFrame(captured,crop,overlay,capturedPopup,capturedNext,automatic,snapshotEpoch,screenWidth,screenHeight));
             image=null; // Ownership is transferred to the imaging worker.
         } catch(Exception e) {
             ocrBusy=false;
@@ -742,7 +897,7 @@ public final class CaptureService extends Service {
             if(!destroyed)showState(OverlayState.ERROR,"读取画面失败，请暂停后重试",ApiRequest.error(e));
         } finally {if(image!=null)image.close();}
     }
-    private void processFrame(Image captured,Rect crop,Rect excluded,Rect popupExcluded,boolean automatic,int snapshotEpoch,int screenWidth,int screenHeight) {
+    private void processFrame(Image captured,Rect crop,Rect excluded,Rect popupExcluded,Rect nextExcluded,boolean automatic,int snapshotEpoch,int screenWidth,int screenHeight) {
         Bitmap bitmap=null;
         try {
             try {
@@ -768,6 +923,7 @@ public final class CaptureService extends Service {
                 Canvas canvas=new Canvas(bitmap);Paint mask=new Paint();mask.setColor(Color.WHITE);
                 canvas.drawRect(excluded.left-crop.left,excluded.top-crop.top,excluded.right-crop.left,excluded.bottom-crop.top,mask);
                 if(!popupExcluded.isEmpty())canvas.drawRect(popupExcluded.left-crop.left,popupExcluded.top-crop.top,popupExcluded.right-crop.left,popupExcluded.bottom-crop.top,mask);
+                if(!nextExcluded.isEmpty())canvas.drawRect(nextExcluded.left-crop.left,nextExcluded.top-crop.top,nextExcluded.right-crop.left,nextExcluded.bottom-crop.top,mask);
             }
             final Bitmap input=bitmap;
             recognizer.process(InputImage.fromBitmap(input,0)).addOnCompleteListener(imaging,task -> {
@@ -775,8 +931,8 @@ public final class CaptureService extends Service {
                 LocalQuestionLocator.Candidate local=null;ScreenDocument observation=null;
                 try {
                     if(task.isSuccessful()) {
-                        if(automatic){doc=document(task.getResult(),crop,excluded,popupExcluded,screenWidth,screenHeight,input);observation=doc;local=LocalQuestionLocator.locate(doc);if(local!=null)doc=local.document;}
-                        else {text=task.getResult().getText();doc=document(task.getResult(),crop,new Rect(),new Rect(),screenWidth,screenHeight,input);}
+                        if(automatic){doc=document(task.getResult(),crop,excluded,popupExcluded,nextExcluded,screenWidth,screenHeight,input);observation=doc;local=LocalQuestionLocator.locate(doc);if(local!=null)doc=local.document;}
+                        else {text=task.getResult().getText();doc=document(task.getResult(),crop,new Rect(),new Rect(),nextExcluded,screenWidth,screenHeight,input);}
                     } else error=task.getException();
                 } catch(Exception e){error=e;}
                 final ScreenDocument result=doc;final String manual=text;final Exception failure=error;
@@ -790,6 +946,7 @@ public final class CaptureService extends Service {
                     if(destroyed){finishImaging();return;}
                     if(paused||snapshotEpoch!=epoch)return;
                     if(observed!=null){latestOcrDocument=observed;latestOcrAt=ocrStartedAt;}
+                    if(manualNextRequested&&observed!=null){manualNextObserved(observed,ocrStartedAt);return;}
                     if(visionTapFallback!=null)finishVisionFallback(result,candidate);
                     else if(failure!=null){invalidateQuestion();showState(OverlayState.ERROR,"文字识别失败，稍后重试或重新选区",ApiRequest.error(failure));}
                     else if(automatic)autoRecognized(result,candidate,null);else recognized(manual,result);
@@ -814,12 +971,12 @@ public final class CaptureService extends Service {
         });
         imaging.shutdown();
     }
-    private ScreenDocument document(Text text,Rect crop,Rect excluded,Rect popupExcluded,int screenWidth,int screenHeight,Bitmap input) {
+    private ScreenDocument document(Text text,Rect crop,Rect excluded,Rect popupExcluded,Rect nextExcluded,int screenWidth,int screenHeight,Bitmap input) {
         List<ScreenDocument.Line> lines=new ArrayList<>();
         for(Text.TextBlock block:text.getTextBlocks())for(Text.Line line:block.getLines()) {
             Rect box=line.getBoundingBox();if(box==null)continue;
             box=new Rect(box);box.offset(crop.left,crop.top);
-            if(Rect.intersects(box,excluded)||Rect.intersects(box,popupExcluded))continue;
+            if(Rect.intersects(box,excluded)||Rect.intersects(box,popupExcluded)||Rect.intersects(box,nextExcluded))continue;
             long signature=VisualSignature.fromBitmap(input,box,crop);
             lines.add(new ScreenDocument.Line(line.getText(),box.left,box.top,box.right,box.bottom,signature));
         }
@@ -827,6 +984,7 @@ public final class CaptureService extends Service {
     }
     private void autoRecognized(ScreenDocument doc,LocalQuestionLocator.Candidate candidate,ScreenQaAccessibilityService.Snapshot sourceNodes) {
         if(textInputInFlight||tapInFlight||navigationTarget!=null||navigationTouchBusy)return; // Don't invalidate a pending action from transient styling.
+        if(!nextPending&&holdingAnswer())return;
         if(doc.tooLarge()) {
             invalidateQuestion();showState(OverlayState.ERROR,"页面文字过多 · 请切到单题或手动选区","暂不提交此页，避免题目被截断。");return;
         }
@@ -840,7 +998,9 @@ public final class CaptureService extends Service {
                 QaLog.event("PAGE unchanged question="+shortId(lastAnsweredKey)+" awaiting_navigation");
             return; // Selected styling and progress counters must not trigger another AI request.
         }
-        if(nextPending&&candidate==null&&navigationAttempts==0)return;
+        // Navigation evidence can be missing on a genuinely new page. Continue recognizing it;
+        // the AI-located stem below still rejects the answered question before cancelling old navigation.
+        if(nextPending&&candidate==null&&scrollAttempts>0&&navigationAttempts==0&&!answerDismissed)return;
         if(retryCachedAnswer(doc,sourceNodes))return;
         // Our own scroll may hide the stem. After a next tap the existing AI locator may confirm the new PWA question.
         if(!candidateKey.isEmpty()&&!currentQuestionKey.isEmpty()&&!candidateKey.equals(currentQuestionKey)) {
@@ -856,7 +1016,7 @@ public final class CaptureService extends Service {
         }
         if(!candidateKey.isEmpty())currentQuestionKey=candidateKey;
         latestDocument=doc;
-        int tokenNow=tracker.observe(doc.fingerprint());
+        int tokenNow=tracker.observe(QuestionStability.signature(doc,candidate));
         if(tokenNow!=activeToken) {
             if(request!=null){request.cancel();request=null;}
             activeToken=tokenNow;lastDetection=null;clearOutline();
@@ -868,10 +1028,23 @@ public final class CaptureService extends Service {
                     (candidate==null?"unknown":candidate.all.size()-candidate.stem.size()));
             showState(OverlayState.SEARCHING,doc.lines.isEmpty()?"未读到文字 · 请露出题目，移开悬浮窗":"自动模式 · 等待文字稳定","正在定位当前题目…");
         } else if(lastDetection!=null && lastDetection.found) {
-            showOutline(doc,lastDetection);
+            // A stable question can now reflow without changing its token; its line IDs may differ.
+            showOutline(doc,candidate==null?lastDetection:QuestionDetection.located(candidate));
         }
         long now=SystemClock.elapsedRealtime();
+        main.removeCallbacks(confirmStableFrame);
+        if(tracker.waitingForStability()){
+            if(stabilityWaitStartedAt==0)stabilityWaitStartedAt=now;
+            main.postDelayed(confirmStableFrame,550);
+            if(now-stabilityWaitStartedAt>=4000)
+                status.setText("文字仍在变化 · 请停止滚动并移开悬浮窗");
+        }else if(tracker.retriesExhausted()){
+            status.setText("多次请求失败 · 请检查 AI 配置后暂停再开始");
+        }else if(tracker.retryDelay(now)>0){
+            status.setText("请求失败 · "+((tracker.retryDelay(now)+999)/1000)+" 秒后重试");
+        }
         if(!tracker.ready(now) || now-lastAutoRequest<900) return;
+        stabilityWaitStartedAt=0;
         lastAutoRequest=now;
         final int token=tracker.begin(),submissionEpoch=epoch;
         final int editableHint=ScreenQaAccessibilityService.visibleEditableCount();
@@ -964,6 +1137,11 @@ public final class CaptureService extends Service {
                         QaLog.event("TextInput callback_discarded reason=question_changed");return;
                     }
                     textInputInFlight=false;
+                    // Paste fallback writes individual blanks; leave the full answer available afterwards.
+                    if(!copyAnswer.isEmpty()){
+                        answerAutoCopied=copyCurrentAnswer(false);
+                        if(popupCopy!=null)popupCopy.setContentDescription(answerAutoCopied?"已自动复制，点击再次复制":"复制答案");
+                    }
                     QaLog.event("TextInput "+(outcome.success?"success":"failed")+" reason="+outcome.reason+
                             " InputMethod="+outcome.method+" TargetInputCount="+outcome.targets+
                             " completed="+outcome.completed);
@@ -1137,7 +1315,7 @@ public final class CaptureService extends Service {
         if(image.getWidth()!=doc.width||image.getHeight()!=doc.height||lines.isEmpty())return false;
         for(ScreenDocument.Line line:lines){
             Rect box=new Rect(line.left,line.top,line.right,line.bottom);
-            if(line.visualSignature==0||Rect.intersects(box,panelRect())||Rect.intersects(box,popupRect())||
+            if(line.visualSignature==0||Rect.intersects(box,panelRect())||Rect.intersects(box,popupRect())||Rect.intersects(box,nextOverlayRect())||
                     VisualSignature.fromImage(image,box)!=line.visualSignature){
                 QaLog.event("TOUCH guard_rejected=signature_or_overlay line_box="+box.flattenToString());return false;
             }
@@ -1166,7 +1344,7 @@ public final class CaptureService extends Service {
                     valid=actionProof.recent(SystemClock.elapsedRealtime());
                     if(valid)for(ScreenDocument.Line line:lines){
                         Rect box=new Rect(line.left,line.top,line.right,line.bottom);
-                        if(Rect.intersects(box,panelRect())||Rect.intersects(box,popupRect())){valid=false;break;}
+                        if(Rect.intersects(box,panelRect())||Rect.intersects(box,popupRect())||Rect.intersects(box,nextOverlayRect())){valid=false;break;}
                     }
                 }
                 if(!valid)QaLog.event("TOUCH guard_rejected="+(image==null?"no_recent_frame":"changed_frame"));
@@ -1193,7 +1371,7 @@ public final class CaptureService extends Service {
         if(overlayState==OverlayState.ANSWER) {
             status.setText(uncertain?"触摸结果不确定 · 请手动确认":
                     clicked?"已发送自动选择操作 · 继续监测":"答案已显示 · 请手动选择");
-            if(!clicked&&needsPopup(shortAnswer))openAnswerPopup();
+            if(needsPopup(shortAnswer))openAnswerPopup();
         }
     }
     private void beginWaitForNext(String key,int requestEpoch) {
@@ -1215,14 +1393,15 @@ public final class CaptureService extends Service {
             if(nextPending&&requestEpoch==epoch&&currentQuestionKey.equals(key))
                 attemptNavigation(key,requestEpoch,null);
         },450);
-        // A large detail card can hide OCR text. The answer remains on the bubble.
-        main.postDelayed(() -> {
-            if(nextPending&&requestEpoch==epoch&&answerPopup!=null)closeAnswerPopup(false);
-        },MIN_ANSWER_VISIBLE_MS);
     }
     private void attemptNavigation(String key,int requestEpoch,String priorSignature) {
         if(!nextPending||paused||destroyed||!autoSelectEnabled||!autoMode||requestEpoch!=epoch||
                 !currentQuestionKey.equals(key))return;
+        if(answerPopup!=null||!minimized){
+            closeAnswerPopup(false);setMinimized(true);latestOcrDocument=null;
+            navigationEvidenceAfter=SystemClock.elapsedRealtime();lastFrame=0;requestFreshFrame();
+            main.postDelayed(()->attemptNavigation(key,requestEpoch,priorSignature),400);return;
+        }
         ScreenQaAccessibilityService service=ScreenQaAccessibilityService.active;
         if(navigationAttempts>=2) {
             QaLog.event("NEXT stopped reason=button_click_did_not_change_question");
@@ -1312,8 +1491,12 @@ public final class CaptureService extends Service {
         if(now-navigationEvidenceWait<6000){
             lastFrame=0;requestFreshFrame();
             main.postDelayed(()->attemptNavigation(key,requestEpoch,priorSignature),400);
-        }else{nextPending=false;setAutoState(AutoState.STOPPED,"navigation_evidence_timeout");
-            status.setText("未能核验导航画面 · 请手动切题，仍在监测");}
+        }else{
+            nextPending=false;answerDismissed=true;closeAnswerPopup(false);
+            setAutoState(AutoState.DETECTING,"navigation_evidence_timeout_resume_recognition");
+            showState(OverlayState.SEARCHING,"自动切题未完成 · 正在继续识题，可点下一题小窗","正在监测题目变化…");
+            lastFrame=0;requestFreshFrame();
+        }
     }
     private boolean scheduleNavigationFromOcr(String key,int requestEpoch){
         if(navigationTarget!=null||navigationTouchBusy)return true;
@@ -1343,7 +1526,10 @@ public final class CaptureService extends Service {
             if(scrollAttempts>=2||navigationAttempts>0||NavigationPolicy.terminalVisible(doc))return false;
             closeAnswerPopup(false);
             Rect viewport=contentBounds(width,height);
-            action=TouchGeometry.scroll(viewport.left,viewport.top,viewport.right,viewport.bottom,panelRect(),popupRect());
+            Rect control=panelRect(),popup=popupRect(),next=nextOverlayRect();
+            action=TouchGeometry.scroll(viewport.left,viewport.top,viewport.right,viewport.bottom,new int[][]{
+                    {control.left,control.top,control.right,control.bottom},{popup.left,popup.top,popup.right,popup.bottom},
+                    {next.left,next.top,next.right,next.bottom}});
             if(action==null)return false;
             action=TouchAction.swipe(action.x,action.y,action.endX,action.endY,action.duration,width,height);
             if(continued)proof=NavigationPolicy.continuationProof(scrollContext,doc);
@@ -1451,6 +1637,7 @@ public final class CaptureService extends Service {
             display.resize(w,h,dpi);display.setSurface(reader.getSurface());old.close();
             if(panel!=null) {panelParams.x=dp(8);panelParams.y=dp(48);panelParams.width=Math.min(dp(316),w-dp(16));windows.updateViewLayout(panel,panelParams);}
             if(bubble!=null){bubbleParams.x=dp(8);bubbleParams.y=dp(48);windows.updateViewLayout(bubble,bubbleParams);}
+            if(nextOverlay!=null){nextOverlayParams.x=Math.max(dp(8),w-dp(60));nextOverlayParams.y=h/2;windows.updateViewLayout(nextOverlay,nextOverlayParams);}
         } catch(Exception e) {stopSelf();}
     }
     @Override public void onConfigurationChanged(Configuration configuration) {
@@ -1464,6 +1651,7 @@ public final class CaptureService extends Service {
         if(themeListener!=null){new Settings(this).prefs.unregisterOnSharedPreferenceChangeListener(themeListener);themeListener=null;}
         ScreenQaAccessibilityService.setTracking(false);
         closeAnswerPopup(false);
+        if(nextOverlay!=null){try{windows.removeView(nextOverlay);}catch(Exception ignored){}nextOverlay=null;}
         if(selector!=null) {try {windows.removeView(selector);}catch(Exception ignored){}selector=null;}
         if(panel!=null) {try {windows.removeView(panel);}catch(Exception ignored){}panel=null;}
         if(bubble!=null){try{windows.removeView(bubble);}catch(Exception ignored){}bubble=null;}

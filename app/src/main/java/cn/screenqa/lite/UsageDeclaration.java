@@ -2,7 +2,7 @@ package cn.screenqa.lite;
 
 /** Versioned acknowledgement; no account, permissions or network grant is implied. */
 final class UsageDeclaration {
-    static final int REVISION = 3;
+    static final int REVISION = 4;
     static final String KEY = "usage_declaration_revision";
     static final String MARQUEE = "仅限个人学习研究 · 严禁用于线上考试、作弊及任何非法用途 · AI 内容仅供参考，请独立核验";
     static final String BODY = "大学生小帮手仅供个人学习与研究，例如课后复习、公开练习题解析及经授权的技术研究。\n\n"

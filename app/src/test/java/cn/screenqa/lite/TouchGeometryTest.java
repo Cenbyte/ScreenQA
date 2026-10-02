@@ -20,4 +20,11 @@ public class TouchGeometryTest {
     @Test public void tinyViewportNeverProducesHardcodedCoordinates(){
         assertNull(TouchGeometry.scroll(0,0,30,70,new int[0][]));
     }
+    @Test public void independentNextOverlayAlsoBlocksTheEntireSwipePath(){
+        TouchAction action=TouchGeometry.scroll(0,0,1000,2000,new int[][]{
+                {700,1000,800,1300},{200,1000,300,1300},{450,1000,550,1300}});
+        assertNull(action);
+        assertEquals(500,TouchGeometry.scroll(0,0,1000,2000,new int[][]{
+                {700,1000,800,1300},{200,1000,300,1300},{850,1000,950,1300}}).x);
+    }
 }

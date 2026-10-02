@@ -47,7 +47,7 @@ final class ThemePalette {
 
     /**
      * The floating overlay window's identity: the deep green panel, its mint ring and the pale text
-     * of the on-screen assistant. It is the built-in default so both surfaces read as one product.
+     * of the on-screen assistant. Available as an optional dark theme.
      */
     static final ThemePalette OVERLAY_GREEN = new Builder("overlay_green", "悬浮窗绿", true,
             0xFF0A1512, 0xFF142420, 0xFF1D3930, 0xFF3A6250, 0xFFF4FFF8, 0xFFB8D3C5)
@@ -107,12 +107,17 @@ final class ThemePalette {
             .build();
 
     /** Built-in default; the first entry is also what the appearance settings list shows on top. */
-    static final ThemePalette DEFAULT = OVERLAY_GREEN;
+    static final ThemePalette DEFAULT = IVORY_LIGHT;
     /** The default of earlier versions, remapped once by {@link Settings#migrateThemeDefault()}. */
     static final String LEGACY_DEFAULT_ID = "black_gold";
 
-    static final ThemePalette[] ALL = {OVERLAY_GREEN, BLACK_GOLD, OBSIDIAN_TEAL, MIDNIGHT_VIOLET,
-            CRIMSON_NIGHT, JADE_GREEN, IVORY_LIGHT};
+    static final ThemePalette[] ALL = {IVORY_LIGHT, OVERLAY_GREEN, BLACK_GOLD, OBSIDIAN_TEAL, MIDNIGHT_VIOLET,
+            CRIMSON_NIGHT, JADE_GREEN};
+    static String defaultMigration(String stored,boolean explicitlySelected,boolean legacyMigrated){
+        if(stored==null)return DEFAULT.id;
+        if(!explicitlySelected&&(OVERLAY_GREEN.id.equals(stored)||(!legacyMigrated&&LEGACY_DEFAULT_ID.equals(stored))))return DEFAULT.id;
+        return stored;
+    }
 
     static ThemePalette fromStored(String value) {
         if (value != null) for (ThemePalette palette : ALL) if (palette.id.equals(value)) return palette;

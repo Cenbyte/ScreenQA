@@ -6,8 +6,9 @@ android {
         applicationId 'cn.screenqa.lite'
         minSdk 26
         targetSdk 35
-        versionCode 24
-        versionName '1.0.0'
+        testInstrumentationRunner 'cn.screenqa.lite.WattsonOverlayTest'
+        versionCode 27
+        versionName '1.2.0'
         // The liquid glass native pipeline ships arm64-v8a only; x86_64 keeps the app installable
         // (emulator) and LiquidDock falls back to the hand-drawn GlassDock there.
         ndk { abiFilters 'arm64-v8a', 'x86_64' }
@@ -31,8 +32,8 @@ android {
         developer {
             dimension 'audience'
             applicationId 'cn.screenqa.lite.dev'
-            versionCode 24
-            versionName '1.0.0'
+            versionCode 27
+            versionName '1.2.0'
             versionNameSuffix '-dev'
             buildConfigField 'boolean', 'DEVELOPER_BUILD', 'true'
             buildConfigField 'boolean', 'DIAGNOSTICS_ENABLED', 'true'

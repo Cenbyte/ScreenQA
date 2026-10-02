@@ -31,7 +31,9 @@ Kotlin 标准库
 
 图标、素材与字体
 绿色角色图标：Cenbyte 原创并提供用于本项目公开发布。
+赞赏码图片：由发布者提供，本地原样展示；图片中的微信赞赏码及标识用于该赞助入口，不作为本项目原创图形声明。
 底部导航 home / tune / person：改编自 Google Material Design Icons。
+复制按钮 content_copy：Google Material Design Icons，沿用下列来源与 Apache-2.0 许可。
 作者：Google 及贡献者；已转为 Android VectorDrawable 并调整显示颜色。
 来源：https://github.com/google/material-design-icons
 许可：Apache-2.0

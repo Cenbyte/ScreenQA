@@ -6,6 +6,8 @@ import android.widget.EditText;
 import android.widget.PopupMenu;
 
 /** Offers editing commands even when an OEM floating selection toolbar is unavailable. */
+// This app uses framework Activity/widgets, with no AppCompat theme or dependency.
+@android.annotation.SuppressLint("AppCompatCustomView")
 final class ClipboardEditText extends EditText {
     ClipboardEditText(Context context) {
         super(context);

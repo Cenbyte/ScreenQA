@@ -18,6 +18,9 @@ final class QuestionTracker {
     boolean ready(long now) {
         return candidate.length() >= 6 && stableFrames >= 2 && !inFlight && !answered && attempts < 3 && now >= retryAt;
     }
+    boolean waitingForStability(){return candidate.length()>=6&&stableFrames<2&&!inFlight&&!answered;}
+    boolean retriesExhausted(){return attempts>=3&&!inFlight&&!answered;}
+    long retryDelay(long now){return !inFlight&&!answered&&attempts>0&&attempts<3?Math.max(0,retryAt-now):0;}
     int begin() { inFlight = true; attempts++; return generation; }
     int attemptCount(){return attempts;}
     boolean isCurrent(int token) { return generation == token; }

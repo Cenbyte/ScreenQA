@@ -45,4 +45,15 @@ public class NavigationPolicyTest {
         assertFalse(NavigationPolicy.mayRetryClick(2,true,true));
         assertFalse(NavigationPolicy.mayRetryClick(1,false,true));assertFalse(NavigationPolicy.mayRetryClick(1,true,false));
     }
+    @Test public void obscuredStemIsUnknownAndFreshUnobscuredFrameRestoresProof(){
+        ScreenDocument masked=new ScreenDocument(Arrays.asList(new ScreenDocument.Line("A. 地球",10,100,200,140),
+                new ScreenDocument.Line("下一题",10,600,200,640)),500,800);
+        assertTrue(NavigationPolicy.stemProof(masked,stem).isEmpty());
+        assertNotNull(NavigationPolicy.uniqueNext(masked));
+        ScreenDocument restored=new ScreenDocument(Arrays.asList(new ScreenDocument.Line("单选题",10,10,200,40),
+                new ScreenDocument.Line("哪一个是恒星？",10,50,300,80),new ScreenDocument.Line("A. 地球",10,100,200,140),
+                new ScreenDocument.Line("下一题",10,600,200,640)),500,800);
+        assertEquals(2,NavigationPolicy.stemProof(restored,stem).size());
+        assertTrue(NavigationPolicy.stemProof(restored,"单选题哪一个不是恒星？").isEmpty());
+    }
 }

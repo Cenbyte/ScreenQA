@@ -19,6 +19,7 @@ final class LoadingRingView extends View {
 
     LoadingRingView(Context context) {
         super(context);
+        setVisibility(GONE);
         paint.setStyle(Paint.Style.STROKE);
         paint.setStrokeCap(Paint.Cap.ROUND);
         paint.setStrokeWidth(3f * getResources().getDisplayMetrics().density);

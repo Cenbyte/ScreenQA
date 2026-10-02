@@ -18,6 +18,7 @@ final class GoldSwitch extends View {
     private float progress;
     private ValueAnimator animator;
     private Listener listener;
+    private boolean thumbGlow=true;
 
     GoldSwitch(Context context) {
         super(context);
@@ -29,6 +30,7 @@ final class GoldSwitch extends View {
     void setPalette(ThemePalette value) { palette = value; invalidate(); }
     void setReduceMotion(boolean value) { reduceMotion = value; }
     void setListener(Listener value) { listener = value; }
+    void setThumbGlow(boolean value) { thumbGlow=value;invalidate(); }
 
     boolean isChecked() { return checked; }
 
@@ -90,7 +92,7 @@ final class GoldSwitch extends View {
         float thumbRadius = h / 2f - Ui.dp(this, 4f);
         float minX = h / 2f, maxX = w - h / 2f;
         float cx = minX + (maxX - minX) * progress;
-        if (progress > 0.02f) {
+        if (thumbGlow && progress > 0.02f) {
             paint.setColor(ThemePalette.alpha(palette.accent, 0.18f * progress));
             canvas.drawCircle(cx, h / 2f, thumbRadius * 1.75f, paint);
         }

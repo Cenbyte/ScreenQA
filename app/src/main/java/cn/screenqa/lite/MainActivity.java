@@ -143,16 +143,9 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
             java.io.ByteArrayOutputStream bytes=new java.io.ByteArrayOutputStream();
             byte[] buffer=new byte[4096];int count;
             while((count=input.read(buffer))!=-1)bytes.write(buffer,0,count);
-            TextView content=new TextView(this);
-            content.setText(bytes.toString(java.nio.charset.StandardCharsets.UTF_8.name()));
-            content.setTextSize(15);content.setTextIsSelectable(true);
-            content.setPadding(dp(20),dp(16),dp(20),dp(16));
-            android.text.util.Linkify.addLinks(content,android.text.util.Linkify.WEB_URLS);
-            ScrollView scroll=new ScrollView(this);scroll.addView(content);
-            new AlertDialog.Builder(this).setTitle(title).setView(scroll).setPositiveButton("关闭",null).show();
+            showThemedInfo(title,bytes.toString(java.nio.charset.StandardCharsets.UTF_8.name()),false);
         }catch(java.io.IOException error){
-            new AlertDialog.Builder(this).setTitle(title).setMessage("文档加载失败，请退出后重试。")
-                    .setPositiveButton("关闭",null).show();
+            showThemedInfo(title,"文档加载失败，请退出后重试。",false);
         }
     }
 
@@ -527,7 +520,36 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
         captureStatus.setPadding(0,dp(17),0,dp(4));
         captureButton=action("开启悬浮助手",true);
         captureButton.setTextColor(palette.onAccent);
-        addButton(hero,captureButton,12);
+        LinearLayout captureControls=new LinearLayout(this);captureControls.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams captureControlsLp=new LinearLayout.LayoutParams(-1,-2);captureControlsLp.topMargin=dp(12);
+        hero.addView(captureControls,captureControlsLp);
+        captureControls.addView(captureButton,new LinearLayout.LayoutParams(0,-2,1));
+        LinearLayout petControl=new LinearLayout(this);petControl.setOrientation(LinearLayout.VERTICAL);petControl.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams petControlLp=new LinearLayout.LayoutParams(dp(90),-2);petControlLp.leftMargin=dp(8);
+        captureControls.addView(petControl,petControlLp);
+        LinearLayout petLabel=new LinearLayout(this);petLabel.setGravity(Gravity.CENTER_VERTICAL);
+        petControl.addView(petLabel,new LinearLayout.LayoutParams(-2,-2));
+        TextView petTitle=text(petLabel,"2号桌宠",12,palette.onAccent,true);
+        // The text helper uses the parent's default width; this horizontal row needs wrap-content.
+        petTitle.setLayoutParams(new LinearLayout.LayoutParams(-2,-2));
+        petTitle.setIncludeFontPadding(false);
+        TextView petHelp=new TextView(this);petHelp.setText("?");petHelp.setTextSize(12);petHelp.setTextColor(palette.onAccent);
+        petHelp.setGravity(Gravity.CENTER);petHelp.setIncludeFontPadding(false);petHelp.setContentDescription("2号桌宠介绍");
+        GradientDrawable helpCircle=new GradientDrawable();helpCircle.setShape(GradientDrawable.OVAL);
+        helpCircle.setColor(android.graphics.Color.TRANSPARENT);helpCircle.setStroke(dp(1),palette.onAccent);
+        petHelp.setBackground(helpCircle);petHelp.setDefaultFocusHighlightEnabled(false);
+        LinearLayout.LayoutParams petHelpLp=new LinearLayout.LayoutParams(dp(18),dp(18));petHelpLp.leftMargin=dp(4);
+        petLabel.addView(petHelp,petHelpLp);petHelp.setOnClickListener(v->showPetIntroduction());
+        GoldSwitch petSwitch=new GoldSwitch(this);petSwitch.setPalette(palette);petSwitch.setReduceMotion(settings.reduceMotion());
+        // This hand-drawn control has its own track; the framework focus rectangle must not show.
+        petSwitch.setDefaultFocusHighlightEnabled(false);petSwitch.setBackground(null);petSwitch.setForeground(null);
+        petSwitch.setThumbGlow(false);
+        petSwitch.setCheckedSilently(settings.nextOverlay());petSwitch.setContentDescription("2号桌宠悬浮窗，主助手开启后生效");
+        petSwitch.setListener(value->{
+            settings.setNextOverlay(value);
+            if(CaptureService.active)startService(new Intent(this,CaptureService.class).setAction("NEXT_OVERLAY"));
+        });
+        petControl.addView(petSwitch,new LinearLayout.LayoutParams(-2,-2));
         captureButton.setOnClickListener(v->{
             if(CaptureService.active){
                 stopService(new Intent(this,CaptureService.class));
@@ -538,6 +560,89 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
         Button permissions=action("权限说明与状态",false);
         addButton(page,permissions,4);
         permissions.setOnClickListener(v->openDetail(7,true));
+        buildHomeGuide(page);
+    }
+
+    private void showPetIntroduction(){
+        showThemedInfo("2号桌宠","点击桌宠快捷强制开始识别题目，桌宠形象为沃特森抱着小水怪，此乃apex萌物",true);
+    }
+    private void showThemedInfo(String heading,String message,boolean pet){
+        showThemedInfo(heading,message,pet,null);
+    }
+    private void showThemedInfo(String heading,String message,boolean pet,Runnable continueAction){
+        android.app.Dialog dialog=new android.app.Dialog(this);
+        dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE);
+        LinearLayout content=new LinearLayout(this);content.setOrientation(LinearLayout.VERTICAL);content.setPadding(dp(24),dp(24),dp(24),dp(24));
+        content.setBackground(shape(palette.surface,palette.border,dp(24),dp(1)));
+        TextView title=text(content,heading,24,palette.foreground,true);title.setPadding(0,0,0,dp(16));
+        ScrollView scroll=new ScrollView(this);scroll.setVerticalScrollBarEnabled(false);scroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        LinearLayout body=new LinearLayout(this);body.setOrientation(LinearLayout.VERTICAL);scroll.addView(body);
+        TextView paragraph=text(body,message,15,palette.foreground,false);paragraph.setTextIsSelectable(!pet);
+        paragraph.setLinkTextColor(palette.accent);
+        if(!pet)android.text.util.Linkify.addLinks(paragraph,android.text.util.Linkify.WEB_URLS);
+        if(pet){
+            TextView face=text(body,"(｡•ᴗ•｡)♡",22,palette.accent,false);face.setGravity(Gravity.CENTER);
+            face.setPadding(0,dp(22),0,dp(8));face.setLayoutParams(new LinearLayout.LayoutParams(-1,-2));
+        }
+        content.addView(scroll,new LinearLayout.LayoutParams(-1,-2));
+        scroll.setPadding(0,0,0,dp(16));
+        if(continueAction==null){
+            Button close=action("知道啦",true);addButton(content,close,0);close.setOnClickListener(v->dialog.dismiss());
+        }else{
+            LinearLayout buttons=new LinearLayout(this);buttons.setGravity(Gravity.CENTER_VERTICAL);
+            content.addView(buttons,new LinearLayout.LayoutParams(-1,-2));
+            Button cancel=action("取消",false),proceed=action("继续",true);
+            buttons.addView(cancel,new LinearLayout.LayoutParams(0,-2,1));
+            LinearLayout.LayoutParams proceedLp=new LinearLayout.LayoutParams(0,-2,1);proceedLp.leftMargin=dp(10);buttons.addView(proceed,proceedLp);
+            cancel.setOnClickListener(v->dialog.dismiss());
+            proceed.setOnClickListener(v->{proceed.setEnabled(false);dialog.dismiss();continueAction.run();});
+        }
+        dialog.setContentView(content);
+        android.view.Window window=dialog.getWindow();
+        if(window!=null){window.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT));window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);window.setDimAmount(0.32f);}
+        dialog.show();
+        if(window!=null){
+            int width=Math.min(getResources().getDisplayMetrics().widthPixels-dp(40),dp(420));
+            window.setLayout(width,-2);
+            scroll.post(()->{int limit=Math.round(getResources().getDisplayMetrics().heightPixels*0.5f);if(scroll.getHeight()>limit){scroll.setLayoutParams(new LinearLayout.LayoutParams(-1,limit));window.setLayout(width,-2);}});
+        }
+    }
+    private void buildHomeGuide(LinearLayout page){
+        section(page,"公告","请先了解当前功能的使用边界");
+        LinearLayout notice=card(page);
+        text(notice,"识别看答案已较成熟，自动选择仍需留意",16,palette.accent,true);
+        text(notice,"自动识别并展示答案功能已经比较成熟，适合学习练习时查看参考解析；AI 答案仍需自行核验。",14,palette.foreground,false);
+        text(notice,"自动选择答案的稳定性还不够，可以在有人看护时尝试，但不建议用于无人值守、挂机刷题。出现误选或卡住时，请关闭辅助自动执行，继续使用识别和复制答案。",14,palette.secondary,false);
+
+        section(page,"首次使用教学","常驻首页，随时回来查看");
+        LinearLayout guide=card(page);
+        guideStep(guide,"1  配置 AI","先按下面的教程获取自己的 DeepSeek API Key，然后到“设置 → AI 与模型”粘贴 Key，选择官方接口并保存配置、测试连接。");
+        Button ai=action("去配置 AI 与模型",false);addButton(guide,ai,8);
+        ai.setOnClickListener(v->openDetail(2,true));
+        guideStep(guide,"2  开启悬浮助手","点击首页“开启悬浮助手”，按提示允许悬浮窗和屏幕共享；选择整个屏幕。授权通知便于查看运行状态和停止入口。");
+        guideStep(guide,"3  开始识别","切到学习练习页面，在悬浮窗点击开始。让题干和选项完整显示，停止滚动，把小水怪移开题目；允许无障碍可帮助读取页面文字，未开启时使用 OCR。");
+        guideStep(guide,"4  查看与复制","答案会在小水怪旁自动展开。填空、简答完整答案会自动复制，也可以点小复制图标。长答案可滚动；关闭后立即继续识题。需要重看时，点击小水怪展开控制面板，再点查看答案。");
+        guideStep(guide,"5  暂停或停止","悬浮窗可暂停、继续或关闭；也可以回首页停止助手。自动选择、填写和下一题默认关闭，需要尝试时到“设置 → 更多 → 辅助自动执行”单独开启。");
+
+        section(page,"DeepSeek API 获取教程","在官方平台创建自己的 Key");
+        LinearLayout apiGuide=card(page);
+        guideStep(apiGuide,"1  登录官方开放平台","打开下方官方平台入口，按平台提示注册或登录，在 API Keys 页面创建一个 Key，创建后复制并妥善保存。");
+        Button platform=action("打开 DeepSeek API Keys",false);addButton(apiGuide,platform,8);
+        platform.setOnClickListener(v->openGuideUrl("https://platform.deepseek.com/api_keys"));
+        guideStep(apiGuide,"2  确认 API 账户可用","API 按实际 Token 用量计费，平台余额不足时无法调用；是否充值和金额由你自行决定，以平台当前规则为准。聊天网页可以使用，不代表 API 账户一定可调用。");
+        guideStep(apiGuide,"3  填入本应用","进入“设置 → AI 与模型”，粘贴 Key，接口选“DeepSeek 官方”，模型选 deepseek-flash；本应用的默认接口为 https://api.deepseek.com/chat/completions。点击“保存配置”后再“测试连接”。");
+        guideStep(apiGuide,"4  连接失败时","401：检查 Key 是否正确；402：检查 DeepSeek API 账户余额；429：请求过快，稍后再试；500/503：服务异常或繁忙。具体原因以页面错误提示和官方说明为准。");
+        text(apiGuide,"不要把 API Key 发给别人、公开截图或上传到代码仓库。教程依据 DeepSeek 官方文档整理，界面和计费规则可能调整。",12,palette.secondary,false);
+        Button docs=action("查看 DeepSeek 官方 API 文档",false);addButton(apiGuide,docs,8);
+        docs.setOnClickListener(v->openGuideUrl("https://api-docs.deepseek.com/"));
+    }
+    private void guideStep(LinearLayout box,String title,String body){
+        text(box,title,15,palette.foreground,true).setPadding(0,dp(14),0,dp(4));
+        text(box,body,13,palette.secondary,false);
+    }
+    private void openGuideUrl(String url){
+        try {startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(url)));}
+        catch(android.content.ActivityNotFoundException e){showFeedback("未找到可打开网页的浏览器，请手动访问："+url);}
     }
 
     private TextView statusLine(LinearLayout box,int icon,String title,String value){
@@ -616,7 +721,7 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
         if(BuildConfig.ROOT_SUPPORTED)entry(page,"Root","权限、自动授权与答案点击",4);
         entry(page,"某 APP 专用自动答题","后续接入指定 APP 流程",8);
     }
-    private int parentTabFor(int id){return id==10?2:1;}
+    private int parentTabFor(int id){return id==10||id==11||id==12?2:1;}
 
     private void openDetail(int id,boolean animate){
         if(id<0||id>=details.length)return;
@@ -642,6 +747,7 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
                 case 9 -> buildTokenStats(body);
                 case 10 -> buildAbout(body);
                 case 11 -> buildAppearanceSettings(body);
+                case 12 -> buildSponsor(body);
                 default -> {return;}
             }
             details[id]=view;
@@ -658,6 +764,7 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
                 Motion.entrance(body.getChildAt(i),i,dp(16),settings.reduceMotion());
         }
         if(id==9)renderTokenStats();
+        if(id==12&&sponsorBlessing!=null)sponsorBlessing.setText(SponsorBlessings.next());
         updateLiveStatus();
         scheduleBackdrop();
     }
@@ -749,6 +856,20 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
         section(page,"我的","识别题目，查看答案");
         entry(page,"关于应用","版本、开源与协议入口",10);
         entry(page,"外观与主题","默认悬浮窗绿 · 7 套配色 · 玻璃与动效",11);
+        entry(page,"赞助支持","自愿赞赏 · 感谢支持与陪伴",12);
+    }
+    private TextView sponsorBlessing;
+    private void buildSponsor(LinearLayout page){
+        section(page,"赞助支持","感谢你支持大学生小帮手");
+        LinearLayout message=card(page);
+        sponsorBlessing=text(message,"",17,palette.accent,true);
+        text(message,"赞助完全自愿，不影响现有功能的使用。",12,palette.secondary,false);
+        ImageView code=new ImageView(this);code.setImageResource(R.drawable.sponsor_code);
+        code.setAdjustViewBounds(true);code.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        code.setContentDescription("张延济的微信赞赏码");
+        LinearLayout.LayoutParams imageLayout=new LinearLayout.LayoutParams(-1,-2);
+        imageLayout.topMargin=dp(16);page.addView(code,imageLayout);
+        text(page,"可截图保存后，在微信中识别赞赏码。谢谢你的心意。",12,palette.secondary,false);
     }
     private void buildAbout(LinearLayout page){
         section(page,"关于大学生小帮手","版本与项目说明");
@@ -771,8 +892,7 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
         Button agreement=action("用户协议",false);addButton(page,agreement,10);
         agreement.setOnClickListener(v->showLegalDocument("用户协议","USER_AGREEMENT.md"));
         Button notice=action("查看用途声明",false);addButton(page,notice,10);
-        notice.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("用途声明")
-                .setMessage(UsageDeclaration.BODY).setPositiveButton("关闭",null).show());
+        notice.setOnClickListener(v->showThemedInfo("用途声明",UsageDeclaration.BODY,false));
         aboutEntry(page,"第三方许可与素材","Google ML Kit · Liquid-Glass-Android · Material Design Icons\n查看来源、作者与适用条款")
                 .setOnClickListener(v->showLegalDocument("第三方许可与素材","OPEN_SOURCE_INFO.txt"));
         Button glassLicense=action("Liquid-Glass-Android · MIT 许可全文",false);addButton(page,glassLicense,10);
@@ -785,8 +905,7 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
         LinearLayout item=card(page);text(item,title,15,palette.foreground,true);
         text(item,detail,12,palette.secondary,false);
         item.setBackground(ripple(palette.surface,ThemePalette.alpha(palette.accent,0.16f),dp(20)));
-        item.setOnClickListener(v->new AlertDialog.Builder(this).setTitle(title)
-                .setMessage(detail).setPositiveButton("知道了",null).show());
+        item.setOnClickListener(v->showThemedInfo(title,detail,false));
         return item;
     }
     private void buildTokenStats(LinearLayout page){
@@ -840,8 +959,7 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
             java.io.ByteArrayOutputStream output=new java.io.ByteArrayOutputStream();
             byte[] buffer=new byte[4096];int count;
             while((count=input.read(buffer))!=-1)output.write(buffer,0,count);
-            new AlertDialog.Builder(this).setTitle("开发版本说明")
-                    .setMessage(output.toString("UTF-8")).setPositiveButton("关闭",null).show();
+            showThemedInfo("开发版本说明",output.toString("UTF-8"),false);
         }catch(java.io.IOException e){showFeedback("无法读取开发版本说明");}
     }
     private void buildPermissionPage(LinearLayout page){
@@ -1210,13 +1328,12 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},41);
             return;
         }
-        new AlertDialog.Builder(this).setTitle("开始屏幕共享")
-                .setMessage("默认自动模式会读取屏幕文字，将需要的文字、行号与相对位置发送到 DeepSeek，用于定位题目和解答；手动选区只发送选区文字。请切到题目页面再开始，避免发送无关内容。可随时暂停或关闭。")
-                .setPositiveButton("继续",(d,w) -> {
+        showThemedInfo("开始屏幕共享",
+                "默认自动模式会读取屏幕文字，将需要的文字、行号与相对位置发送到 DeepSeek，用于定位题目和解答；手动选区只发送选区文字。请切到题目页面再开始，避免发送无关内容。可随时暂停或关闭。",false,() -> {
                     MediaProjectionManager manager=getSystemService(MediaProjectionManager.class);
                     Intent intent=Build.VERSION.SDK_INT>=34 ? manager.createScreenCaptureIntent(MediaProjectionConfig.createConfigForDefaultDisplay()) : manager.createScreenCaptureIntent();
                     startActivityForResult(intent,CAPTURE);
-                }).setNegativeButton("取消",null).show();
+                });
     }
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request,result,data);
