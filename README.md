@@ -47,7 +47,5 @@ applicationId 和 Java namespace 保持兼容，developerRelease 禁用。正式
 
 ## 发布与许可
 
-[发布准备与本地签名说明](docs/RELEASE_PREPARATION.md)包含 ZIP 布局、签名流程、协议定稿与设备验收待办。将源码上传 GitHub 仓库，将正式签名 APK 作为 Release 附件；不要上传 .local、缓存、运行日志、API Key 或密钥。本轮只生成 ZIP，按用户授权提交本地 Git，不创建远程仓库或推送。
-
 历史架构、改动和验证边界见 [DEVLOG](DEVLOG.md)；DSH 历史界面记录原文保留在 DSH-LOG.md。项目源码许可见 [LICENSE](LICENSE)，第三方 SDK、模型和图标按各自权利使用。开源许可不因用途声明被改写。
 
