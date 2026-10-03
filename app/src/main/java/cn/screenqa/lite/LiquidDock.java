@@ -7,6 +7,9 @@ import android.graphics.drawable.Drawable;
 import android.os.Build;
 import android.view.Gravity;
 import android.view.View;
+import android.view.MotionEvent;
+import android.view.ViewConfiguration;
+import android.widget.LinearLayout;
 import android.widget.FrameLayout;
 import com.example.liquidglass.GlassAccessibilityMode;
 import com.example.liquidglass.GlassMaterial;
@@ -42,6 +45,8 @@ final class LiquidDock extends FrameLayout implements Dock {
     private ThemePalette palette = ThemePalette.DEFAULT;
     private boolean syncing, glass = true, lifted, reduceMotion;
     private int count, selected;
+    private final DockSwipeGesture swipe;
+    private boolean swipeBlocked;
 
     /** The native blur pipeline ships arm64-v8a + armeabi-v7a only; everything else falls back. */
     static boolean isSupported() {
@@ -54,6 +59,7 @@ final class LiquidDock extends FrameLayout implements Dock {
 
     LiquidDock(Context context) {
         super(context);
+        swipe = new DockSwipeGesture(ViewConfiguration.get(context).getScaledTouchSlop());
         setClipChildren(false);
         setClipToPadding(false);
         bar = new LiquidGlassTabBar(context);
@@ -62,6 +68,15 @@ final class LiquidDock extends FrameLayout implements Dock {
         bar.setBevelWidth(Ui.dp(context, BEVEL_DP));
         bar.setRefractionHeight(Ui.dp(context, REFRACTION_DP));
         bar.setRefractionFalloff(1.6f);
+        // The default folded lens compresses the backdrop into a mirrored rim. Keep the
+        // mapping monotonic so page changes cannot turn that rim into a torn dark strip.
+        bar.setRefractionNoFold(true);
+        for (int i = 0; i < bar.getChildCount(); i++) {
+            View child = bar.getChildAt(i);
+            if (child instanceof com.example.liquidglass.LiquidGlassView) {
+                ((com.example.liquidglass.LiquidGlassView) child).setRefractionNoFold(true);
+            }
+        }
         bar.setDispersionStrength(0.12f);
         bar.setBlurAmount(BLUR_FRACTION);
         bar.setSaturation(1.15f);
@@ -102,6 +117,16 @@ final class LiquidDock extends FrameLayout implements Dock {
         boolean previous = syncing;
         syncing = true;
         bar.setTabs(tabs);
+        // The library adds the droplet after tabsRow. With a direct page backdrop it
+        // paints over labels instead of reproducing them from the parent capture.
+        // Draw sharp icons/text last; tab-bar interception still owns all gestures.
+        for (int i = 0; i < bar.getChildCount(); i++) {
+            View child = bar.getChildAt(i);
+            if (child instanceof LinearLayout) {
+                child.bringToFront();
+                break;
+            }
+        }
         applyTint();
         if (selected > 0 && selected < count) bar.setSelectedIndex(selected);
         syncing = previous;
@@ -162,6 +187,17 @@ final class LiquidDock extends FrameLayout implements Dock {
     @Override public void setBackdropSource(View source) {
         if (source == null) return;
         bar.setBackdropSource(source);
+        // The selected droplet otherwise captures its glass parent, nesting GPU lens
+        // effects. Sample the same opaque page layer directly for both glass surfaces.
+        for (int i = 0; i < bar.getChildCount(); i++) {
+            View child = bar.getChildAt(i);
+            if (child instanceof com.example.liquidglass.LiquidGlassView) {
+                com.example.liquidglass.LiquidGlassView lens =
+                        (com.example.liquidglass.LiquidGlassView) child;
+                lens.setBackdropSource(source);
+                lens.setEnableDynamicBackground(false);
+            }
+        }
         // Scroll listeners refresh the sample; avoid the library's unconditional redraw loop.
         bar.setEnableDynamicBackground(false);
     }
@@ -172,7 +208,77 @@ final class LiquidDock extends FrameLayout implements Dock {
     @Override public boolean liveSampling() { return true; }
 
     /** Scroll events already invalidate the library; only slow backdrop animation needs a nudge. */
-    void refreshBackdrop() { if (glass && isShown()) bar.invalidate(); }
+    void refreshBackdrop() {
+        if (!glass || !isShown()) return;
+        bar.invalidate();
+        // Invalidate the droplet too: invalidating a parent alone can replay its cached
+        // child RenderNode after switching to a different page.
+        for (int i = 0; i < bar.getChildCount(); i++) {
+            View child = bar.getChildAt(i);
+            if (child instanceof com.example.liquidglass.LiquidGlassView) child.invalidate();
+        }
+    }
+
+    @Override public boolean dispatchTouchEvent(MotionEvent event) {
+        int action = event.getActionMasked();
+        if (action == MotionEvent.ACTION_DOWN) {
+            swipeBlocked = false;
+            swipe.begin(event.getX(), event.getY(), bar.getLeft(), bar.getTop(), bar.getWidth(), bar.getHeight());
+        } else if (action == MotionEvent.ACTION_MOVE) {
+            swipe.move(event.getX(), event.getY());
+        } else if (action == MotionEvent.ACTION_POINTER_DOWN) {
+            swipe.abort();
+        }
+        if (swipe.active() && (swipe.cancelled() || action == MotionEvent.ACTION_UP && swipe.dragging())) {
+            if (!swipeBlocked) {
+                if (!swipe.cancelled()) selectSwipeAt(event);
+                cancelLibraryTouch(event);
+                settleSwipe();
+                swipeBlocked = true;
+            }
+        }
+        boolean handled = swipeBlocked || super.dispatchTouchEvent(event);
+        if (action == MotionEvent.ACTION_MOVE && !swipeBlocked) selectSwipeAt(event);
+        if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+            if (action == MotionEvent.ACTION_CANCEL && swipe.dragging()) settleSwipe();
+            swipe.reset();swipeBlocked = false;
+        }
+        return handled;
+    }
+
+    private void selectSwipeAt(MotionEvent event) {
+        // The library's public child row gives the exact padded tab bounds without reflection.
+        for (int child = 0; child < bar.getChildCount(); child++) {
+            View row = bar.getChildAt(child);
+            if (!(row instanceof LinearLayout)) continue;
+            int index = swipe.selectionAt(event.getX(), event.getY(), bar.getLeft() + row.getLeft(),
+                    bar.getTop(), row.getWidth(), bar.getHeight(), count, selected);
+            if (index >= 0) {
+                // Keep the library's droplet following the finger; page/haptics update immediately.
+                selected = index;
+                if (listener != null) listener.onSelected(index);
+            }
+            return;
+        }
+    }
+
+    private void cancelLibraryTouch(MotionEvent event) {
+        MotionEvent cancel = MotionEvent.obtain(event);
+        cancel.setAction(MotionEvent.ACTION_CANCEL);
+        super.dispatchTouchEvent(cancel);
+        cancel.recycle();
+    }
+
+    private void settleSwipe() {
+        boolean previous = syncing;syncing = true;
+        bar.setSelectedIndex(selected);
+        syncing = previous;
+    }
+
+    @Override protected void onDetachedFromWindow() {
+        swipe.reset();swipeBlocked = false;
+        super.onDetachedFromWindow();
+    }
 
     private void onTabPicked(int index) {
         if (index < 0 || index == selected) return;

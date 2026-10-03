@@ -8,6 +8,7 @@ import android.graphics.drawable.GradientDrawable;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewConfiguration;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -34,9 +35,11 @@ final class GlassDock extends FrameLayout implements Dock {
     private Dock.Listener listener;
     private boolean reduceMotion, lifted;
     private int itemWidth, count, selected = -1;
+    private final DockSwipeGesture swipe;
 
     GlassDock(Context context) {
         super(context);
+        swipe = new DockSwipeGesture(ViewConfiguration.get(context).getScaledTouchSlop());
         setWillNotDraw(false);
         setClipChildren(false);
         glass = new LiquidGlassView(context);
@@ -66,6 +69,62 @@ final class GlassDock extends FrameLayout implements Dock {
     }
 
     @Override public void setListener(Dock.Listener value) { listener = value; }
+
+    @Override public boolean onInterceptTouchEvent(MotionEvent event) {
+        switch (event.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN:
+                swipe.begin(event.getX(), event.getY(), glass.getLeft(), glass.getTop(), glass.getWidth(), glass.getHeight());
+                break;
+            case MotionEvent.ACTION_MOVE:
+                swipe.move(event.getX(), event.getY());
+                selectSwipeAt(event);
+                break;
+            case MotionEvent.ACTION_POINTER_DOWN:
+                swipe.abort();
+                break;
+            case MotionEvent.ACTION_CANCEL:
+                swipe.reset();
+                break;
+        }
+        return swipe.captured() || super.onInterceptTouchEvent(event);
+    }
+
+    @Override public boolean onTouchEvent(MotionEvent event) {
+        if (!swipe.active()) return super.onTouchEvent(event);
+        switch (event.getActionMasked()) {
+            case MotionEvent.ACTION_MOVE:
+                swipe.move(event.getX(), event.getY());
+                selectSwipeAt(event);
+                break;
+            case MotionEvent.ACTION_POINTER_DOWN:
+                swipe.abort();
+                break;
+            case MotionEvent.ACTION_UP:
+                boolean dragged = swipe.captured();
+                int index = swipe.finish(event.getX(), event.getY(), items.getLeft(), glass.getTop(),
+                        items.getWidth(), glass.getHeight(), count, selected);
+                if (index >= 0) {
+                    setSelected(index, true);
+                    if (listener != null) listener.onSelected(index);
+                } else if (!dragged) performClick();
+                break;
+            case MotionEvent.ACTION_CANCEL:
+                swipe.reset();
+                break;
+        }
+        return true;
+    }
+
+    @Override public boolean performClick() { return super.performClick(); }
+
+    private void selectSwipeAt(MotionEvent event) {
+        int index = swipe.selectionAt(event.getX(), event.getY(), items.getLeft(), glass.getTop(),
+                items.getWidth(), glass.getHeight(), count, selected);
+        if (index >= 0) {
+            setSelected(index, true);
+            if (listener != null) listener.onSelected(index);
+        }
+    }
 
     @Override public void setReduceMotion(boolean value) {
         reduceMotion = value;
@@ -167,6 +226,7 @@ final class GlassDock extends FrameLayout implements Dock {
 
     @Override
     protected void onDetachedFromWindow() {
+        swipe.reset();
         stopLiquid();
         super.onDetachedFromWindow();
     }

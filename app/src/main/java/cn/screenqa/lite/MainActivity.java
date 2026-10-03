@@ -67,6 +67,13 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
     private int uiGeneration;
     private ValueAnimator liquidDriver;
     private boolean uiReady;
+    private final GitHubUpdateChecker updateChecker=new GitHubUpdateChecker();
+    private ExecutorService updateExecutor;
+    private boolean updateInFlight;
+    private GitHubUpdateChecker.Result updateResult=new GitHubUpdateChecker.Result(GitHubUpdateChecker.Status.CHECKING,null);
+    private LinearLayout updateCard;
+    private TextView updateTitle,updateDescription;
+    private Button updateAction;
 
     private int dp(float value){return Ui.dp(this,value);}
 
@@ -129,6 +136,7 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
             settings.prefs.edit().putInt(UsageDeclaration.KEY,UsageDeclaration.REVISION)
                     .putLong("usage_declaration_accepted_at",System.currentTimeMillis()).apply();
             initializeUi(bundle);
+            checkForUpdates();
             CaptureService.observe(this);
             if(aurora!=null)aurora.start();
             startLiquidDriver();
@@ -228,7 +236,10 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
         dock.setReduceMotion(settings.reduceMotion());
         dock.setItems(new String[]{"首页","设置","我的"},
                 new int[]{R.drawable.ic_dock_home,R.drawable.ic_dock_settings,R.drawable.ic_dock_profile});
-        dock.setListener(index->showTab(index,true));
+        dock.setListener(index->{
+            TouchFeedback.play((View)dock,TouchFeedback.Strength.NORMAL);
+            showTab(index,true);
+        });
         dock.setBackdropSource(pagesLayer);
         aurora.setBackdropChanged(()->{
             if(dock instanceof LiquidDock)((LiquidDock)dock).refreshBackdrop();
@@ -503,6 +514,7 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
     }
 
     private void buildHome(LinearLayout page){
+        buildUpdateStatus(page);
         LinearLayout hero=new LinearLayout(this);
         hero.setOrientation(LinearLayout.VERTICAL);
         hero.setPadding(dp(22),dp(24),dp(22),dp(22));
@@ -546,11 +558,13 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
         petSwitch.setThumbGlow(false);
         petSwitch.setCheckedSilently(settings.nextOverlay());petSwitch.setContentDescription("2号桌宠悬浮窗，主助手开启后生效");
         petSwitch.setListener(value->{
+            TouchFeedback.play(petSwitch,TouchFeedback.Strength.LIGHT);
             settings.setNextOverlay(value);
             if(CaptureService.active)startService(new Intent(this,CaptureService.class).setAction("NEXT_OVERLAY"));
         });
         petControl.addView(petSwitch,new LinearLayout.LayoutParams(-2,-2));
         captureButton.setOnClickListener(v->{
+            TouchFeedback.play(v,TouchFeedback.Strength.STRONG);
             if(CaptureService.active){
                 stopService(new Intent(this,CaptureService.class));
                 showFeedback("正在关闭悬浮助手");
@@ -640,6 +654,76 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
         text(box,title,15,palette.foreground,true).setPadding(0,dp(14),0,dp(4));
         text(box,body,13,palette.secondary,false);
     }
+    private void buildUpdateStatus(LinearLayout page){
+        updateCard=card(page);
+        updateCard.setPadding(dp(14),dp(10),dp(14),dp(10));
+        LinearLayout row=new LinearLayout(this);row.setGravity(Gravity.CENTER_VERTICAL);
+        updateCard.addView(row,new LinearLayout.LayoutParams(-1,-2));
+        LinearLayout labels=new LinearLayout(this);labels.setOrientation(LinearLayout.VERTICAL);
+        row.addView(labels,new LinearLayout.LayoutParams(0,-2,1));
+        updateTitle=new TextView(this);updateTitle.setTextSize(15);
+        updateTitle.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
+        updateTitle.setIncludeFontPadding(false);
+        updateTitle.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        labels.addView(updateTitle,new LinearLayout.LayoutParams(-1,-2));
+        updateDescription=text(labels,"",12,palette.secondary,false);
+        updateDescription.setIncludeFontPadding(false);
+        LinearLayout.LayoutParams descriptionLp=new LinearLayout.LayoutParams(-1,-2);descriptionLp.topMargin=dp(4);
+        updateDescription.setLayoutParams(descriptionLp);
+        updateAction=action(getString(R.string.update_retry),true);
+        LinearLayout.LayoutParams actionLp=new LinearLayout.LayoutParams(-2,-2);actionLp.leftMargin=dp(12);
+        row.addView(updateAction,actionLp);
+        updateAction.setOnClickListener(v->{
+            TouchFeedback.play(v,TouchFeedback.Strength.NORMAL);
+            if(updateResult.status==GitHubUpdateChecker.Status.AVAILABLE&&updateResult.release!=null)
+                openGuideUrl(updateResult.release.url);
+            else checkForUpdates();
+        });
+        renderUpdateStatus();
+    }
+
+    private void checkForUpdates(){
+        if(updateInFlight||isDestroyed()||isFinishing())return;
+        updateInFlight=true;
+        updateResult=new GitHubUpdateChecker.Result(GitHubUpdateChecker.Status.CHECKING,null);
+        renderUpdateStatus();
+        if(updateExecutor==null)updateExecutor=Executors.newSingleThreadExecutor();
+        updateExecutor.execute(()->{
+            GitHubUpdateChecker.Result result=updateChecker.check(BuildConfig.VERSION_NAME,BuildConfig.VERSION_CODE);
+            runOnUiThread(()->{
+                if(isDestroyed()||isFinishing())return;
+                updateInFlight=false;updateResult=result;renderUpdateStatus();
+            });
+        });
+    }
+
+    private void renderUpdateStatus(){
+        if(updateTitle==null)return;
+        boolean available=updateResult.status==GitHubUpdateChecker.Status.AVAILABLE;
+        boolean failed=updateResult.status==GitHubUpdateChecker.Status.FAILED;
+        updateTitle.setTextColor(failed?palette.secondary:palette.accent);
+        updateCard.setBackground(shape(available?palette.accentSoft:palette.surface,
+                available?palette.accent:palette.border,dp(20),dp(1)));
+        updateAction.setEnabled(!updateInFlight);
+        updateAction.setText(available?R.string.update_release:
+                updateInFlight?R.string.update_checking_short:R.string.update_retry);
+        switch(updateResult.status){
+            case AVAILABLE:
+                updateTitle.setText(getString(R.string.update_available,updateResult.release.version));
+                updateDescription.setText(getString(R.string.update_available_detail,BuildConfig.VERSION_NAME));break;
+            case CURRENT:
+                updateTitle.setText(R.string.update_current);
+                updateDescription.setText(getString(R.string.update_current_detail,BuildConfig.VERSION_NAME,updateResult.release.version));break;
+            case FAILED:
+                updateTitle.setText(R.string.update_failed);
+                updateDescription.setText(R.string.update_failed_detail);break;
+            default:
+                updateTitle.setText(R.string.update_checking);
+                updateDescription.setText(getString(R.string.update_checking_detail,BuildConfig.VERSION_NAME));break;
+        }
+        scheduleBackdrop();
+    }
+
     private void openGuideUrl(String url){
         try {startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(url)));}
         catch(android.content.ActivityNotFoundException e){showFeedback("未找到可打开网页的浏览器，请手动访问："+url);}
@@ -693,7 +777,10 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
         text(labels,subtitle,12,palette.secondary,false).setPadding(0,dp(3),0,0);
         text(row,"›",26,palette.secondary,false);
         item.setContentDescription(title+"，"+subtitle);
-        item.setOnClickListener(v->openDetail(destination,true));
+        item.setOnClickListener(v->{
+            if(destination==12)TouchFeedback.play(v,TouchFeedback.Strength.NORMAL);
+            openDetail(destination,true);
+        });
         item.setOnTouchListener((v,event)->{
             int action=event.getActionMasked();
             if(action==android.view.MotionEvent.ACTION_DOWN)Motion.press(v,true,settings.reduceMotion());
@@ -1385,6 +1472,7 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
     @Override protected void onStart() {
         super.onStart();
         if(!uiReady)return;
+        checkForUpdates();
         if(aurora!=null)aurora.start();
         startLiquidDriver();
     }
@@ -1489,6 +1577,8 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
         super.onBackPressed();
     }
     @Override protected void onDestroy() {
+        updateChecker.close();
+        if(updateExecutor!=null)updateExecutor.shutdownNow();
         if (testing!=null) testing.cancel();
         if(executor!=null)executor.shutdownNow();
         backdrop.release();
