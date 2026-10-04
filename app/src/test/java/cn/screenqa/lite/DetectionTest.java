@@ -6,6 +6,18 @@ import java.util.*;
 import static org.junit.Assert.*;
 
 public class DetectionTest {
+    @Test public void questionSummaryPreservesShortStemAndUsesLongStemSummary() throws Exception {
+        ScreenDocument shortDoc=doc("太阳是不是恒星？");
+        String raw=response("true_false","[1]","[1]");
+        assertEquals(shortDoc.text(Collections.singletonList(1)),QuestionDetection.parse(
+                raw.replace("\"answer\"","\"question_summary\":\"模型改写\",\"answer\""),shortDoc).summary);
+        ScreenDocument longDoc=doc("请根据地球围绕太阳的运动和太阳自身发光的特点判断太阳是否是一颗恒星？");
+        QuestionDetection q=QuestionDetection.parse(raw.replace("\"answer\"",
+                "\"question_summary\":\"太阳是否是恒星\",\"answer\""),longDoc);
+        assertEquals("太阳是否是恒星",q.summary);assertEquals("示例答案",q.answer);
+        assertTrue(QuestionDetection.parse(raw,longDoc).summary.codePointCount(0,
+                QuestionDetection.parse(raw,longDoc).summary.length())<=20);
+    }
     @Test public void progressHeadingIsRemovedFromNonContiguousModelStem() throws Exception {
         ScreenDocument d=doc("QUESTION","2/10","已答 2 题","CSS 主要负责网页的什么？","A 数据存储","B 页面样式");
         QuestionDetection q=QuestionDetection.parse(response("choice","[1,4]","[1,4,5,6]"),d);

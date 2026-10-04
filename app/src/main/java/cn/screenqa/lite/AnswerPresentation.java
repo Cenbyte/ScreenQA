@@ -3,6 +3,13 @@ package cn.screenqa.lite;
 import java.util.regex.*;
 
 final class AnswerPresentation {
+    static String questionSummary(String stem,String generated){
+        if(stem.codePointCount(0,stem.length())<=20)return stem;
+        String summary=generated==null?"":generated.trim().replaceAll("[\\r\\n]+"," ");
+        if(summary.isEmpty())summary=stem.replaceAll("[\\r\\n]+"," ").trim();
+        return summary.codePointCount(0,summary.length())<=20?summary:
+                summary.substring(0,summary.offsetByCodePoints(0,19))+"…";
+    }
     // About five characters per second, with time to find the copy/close controls.
     static long visibleMillis(String answer,boolean textAnswer) {
         int count=answer.codePointCount(0,answer.length());
@@ -10,7 +17,7 @@ final class AnswerPresentation {
     }
     static int bubbleWidthDp(String answer) {
         int count=answer.codePointCount(0,answer.length());
-        return Math.min(272,Math.max(144,112+count*3));
+        return Math.min(320,Math.max(184,144+count*4));
     }
     static String compact(String type,String answer) {
         String s=answer.trim();

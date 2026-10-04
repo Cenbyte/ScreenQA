@@ -6,6 +6,7 @@ import java.util.*;
 final class QuestionDetection {
     final boolean found,complete;
     final String type,answer;
+    String summary="";
     final List<String> answers;
     final List<Integer> stemIds,questionIds;
     private QuestionDetection(boolean found,boolean complete,String type,String answer,List<String> answers,List<Integer> stem,List<Integer> all) {
@@ -52,8 +53,10 @@ final class QuestionDetection {
         else if(!answer.isEmpty()&&("fill_blank".equals(type)||"short_answer".equals(type)))answers.add(answer);
         if(complete && answer.isEmpty())throw new JSONException("Empty answer");
         if(answer.length()>6000)throw new JSONException("Answer too long");
-        return new QuestionDetection(true,complete,type,complete?answer:"题目条件不完整，请露出完整题干；含图或复杂公式时请核对原题。",
+        QuestionDetection result=new QuestionDetection(true,complete,type,complete?answer:"题目条件不完整，请露出完整题干；含图或复杂公式时请核对原题。",
                 complete?Collections.unmodifiableList(answers):Collections.emptyList(),stem,all);
+        result.summary=AnswerPresentation.questionSummary(doc.text(stem),object.optString("question_summary",""));
+        return result;
     }
     private static List<Integer> ids(JSONArray data,int max) throws JSONException {
         if(data.length()<1 || data.length()>max)throw new JSONException("Invalid line count");

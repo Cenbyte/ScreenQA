@@ -56,6 +56,7 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
     private FrameLayout contentHost,pagesLayer;
     private AuroraBackground aurora;
     private Dock dock;
+    private boolean padLayout;
     private View[] pages=new View[3];
     private ScrollView[] scrolls=new ScrollView[3];
     private View[] details=new View[13];
@@ -164,7 +165,11 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
                 View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR|View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
     }
 
+    // The user explicitly requests a physical right-hand sidebar in Pad mode.
+    @android.annotation.SuppressLint("RtlHardcoded")
     private void buildUi(){
+        android.util.DisplayMetrics metrics=getResources().getDisplayMetrics();
+        padLayout=PadLayout.usesPadLayout(metrics.widthPixels,metrics.heightPixels);
         FrameLayout root=new FrameLayout(this);
         root.setBackgroundColor(palette.background);
         root.setOnApplyWindowInsetsListener((v,insets)->{
@@ -189,6 +194,7 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
 
         LinearLayout column=new LinearLayout(this);
         column.setOrientation(LinearLayout.VERTICAL);
+        if(padLayout)column.setPadding(0,0,dp(112),0);
         pagesLayer.addView(column,new FrameLayout.LayoutParams(-1,-1));
 
         LinearLayout top=new LinearLayout(this);
@@ -244,13 +250,15 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
         aurora.setBackdropChanged(()->{
             if(dock instanceof LiquidDock)((LiquidDock)dock).refreshBackdrop();
         });
-        FrameLayout.LayoutParams dockLp=new FrameLayout.LayoutParams(-1,
-                Dock.heightFor(this),Gravity.BOTTOM|Gravity.CENTER_HORIZONTAL);
-        dockLp.bottomMargin=dp(12);
+        FrameLayout.LayoutParams dockLp=padLayout?
+                new FrameLayout.LayoutParams(dp(96),dp(268),Gravity.RIGHT|Gravity.CENTER_VERTICAL):
+                new FrameLayout.LayoutParams(-1,Dock.heightFor(this),Gravity.BOTTOM|Gravity.CENTER_HORIZONTAL);
+        if(padLayout)dockLp.rightMargin=dp(12);else dockLp.bottomMargin=dp(12);
         root.addView((View)dock,dockLp);
 
         pages[0]=page(0);
-        buildHome((LinearLayout)pages[0].getTag());
+        LinearLayout home=(LinearLayout)pages[0].getTag();
+        if(padLayout)buildPadHome(home);else buildHome(home);
         pages[0].setVisibility(View.GONE);
         contentHost.addView(pages[0]);
 
@@ -263,6 +271,7 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
      * glass panel everywhere else. Any load/link failure downgrades instead of crashing the app.
      */
     private Dock createDock(){
+        if(padLayout)return new PadDock(this);
         if(!LiquidDock.isSupported())return new GlassDock(this);
         try{
             return new LiquidDock(this);
@@ -280,18 +289,18 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
         scroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
         // Reserve the dock at the end of the scroll range but let the cards travel under the capsule:
         // the glass needs moving content behind it to read as frosted glass.
-        scroll.setPadding(0,0,0,Dock.heightFor(this)+dp(8));
+        scroll.setPadding(0,0,0,padLayout?0:Dock.heightFor(this)+dp(8));
         FrameLayout shell=new FrameLayout(this);
         scroll.addView(shell);
         LinearLayout content=new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(dp(18),dp(12),dp(18),dp(28));
-        int width=Math.min(getResources().getDisplayMetrics().widthPixels,dp(640));
+        int width=Math.min(getResources().getDisplayMetrics().widthPixels,dp(padLayout?1080:640));
         shell.addView(content,new FrameLayout.LayoutParams(width,-2,Gravity.TOP|Gravity.CENTER_HORIZONTAL));
         shell.addOnLayoutChangeListener((v,left,top,right,bottom,oldLeft,oldTop,oldRight,oldBottom)->{
             int available=right-left;
             if(available<=0)return;
-            int desired=Math.min(available,dp(640));
+            int desired=Math.min(available,dp(padLayout?1080:640));
             FrameLayout.LayoutParams params=(FrameLayout.LayoutParams)content.getLayoutParams();
             if(params.width!=desired){params.width=desired;content.setLayoutParams(params);}
         });
@@ -513,7 +522,20 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
         return chip;
     }
 
+    private void buildPadHome(LinearLayout page){
+        LinearLayout source=new LinearLayout(this);source.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout[] sections=new LinearLayout[4];
+        for(int i=0;i<sections.length;i++){
+            sections[i]=new LinearLayout(this);sections[i].setOrientation(LinearLayout.VERTICAL);
+            source.addView(sections[i]);
+        }
+        buildHome(sections[0],sections[1],sections[2],sections[3]);
+        arrangePadColumns(page,source);
+    }
     private void buildHome(LinearLayout page){
+        buildHome(page,page,page,page);
+    }
+    private void buildHome(LinearLayout page,LinearLayout noticePage,LinearLayout guidePage,LinearLayout apiPage){
         buildUpdateStatus(page);
         LinearLayout hero=new LinearLayout(this);
         hero.setOrientation(LinearLayout.VERTICAL);
@@ -574,7 +596,7 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
         Button permissions=action("权限说明与状态",false);
         addButton(page,permissions,4);
         permissions.setOnClickListener(v->openDetail(7,true));
-        buildHomeGuide(page);
+        buildHomeGuide(noticePage,guidePage,apiPage);
     }
 
     private void showPetIntroduction(){
@@ -621,15 +643,15 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
             scroll.post(()->{int limit=Math.round(getResources().getDisplayMetrics().heightPixels*0.5f);if(scroll.getHeight()>limit){scroll.setLayoutParams(new LinearLayout.LayoutParams(-1,limit));window.setLayout(width,-2);}});
         }
     }
-    private void buildHomeGuide(LinearLayout page){
-        section(page,"公告","请先了解当前功能的使用边界");
-        LinearLayout notice=card(page);
+    private void buildHomeGuide(LinearLayout noticePage,LinearLayout guidePage,LinearLayout apiPage){
+        section(noticePage,"公告","请先了解当前功能的使用边界");
+        LinearLayout notice=card(noticePage);
         text(notice,"识别看答案已较成熟，自动选择仍需留意",16,palette.accent,true);
         text(notice,"自动识别并展示答案功能已经比较成熟，适合学习练习时查看参考解析；AI 答案仍需自行核验。",14,palette.foreground,false);
         text(notice,"自动选择答案的稳定性还不够，可以在有人看护时尝试，但不建议用于无人值守、挂机刷题。出现误选或卡住时，请关闭辅助自动执行，继续使用识别和复制答案。",14,palette.secondary,false);
 
-        section(page,"首次使用教学","常驻首页，随时回来查看");
-        LinearLayout guide=card(page);
+        section(guidePage,"首次使用教学","常驻首页，随时回来查看");
+        LinearLayout guide=card(guidePage);
         guideStep(guide,"1  配置 AI","先按下面的教程获取自己的 DeepSeek API Key，然后到“设置 → AI 与模型”粘贴 Key，选择官方接口并保存配置、测试连接。");
         Button ai=action("去配置 AI 与模型",false);addButton(guide,ai,8);
         ai.setOnClickListener(v->openDetail(2,true));
@@ -638,8 +660,8 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
         guideStep(guide,"4  查看与复制","答案会在小水怪旁自动展开。填空、简答完整答案会自动复制，也可以点小复制图标。长答案可滚动；关闭后立即继续识题。需要重看时，点击小水怪展开控制面板，再点查看答案。");
         guideStep(guide,"5  暂停或停止","悬浮窗可暂停、继续或关闭；也可以回首页停止助手。自动选择、填写和下一题默认关闭，需要尝试时到“设置 → 更多 → 辅助自动执行”单独开启。");
 
-        section(page,"DeepSeek API 获取教程","在官方平台创建自己的 Key");
-        LinearLayout apiGuide=card(page);
+        section(apiPage,"DeepSeek API 获取教程","在官方平台创建自己的 Key");
+        LinearLayout apiGuide=card(apiPage);
         guideStep(apiGuide,"1  登录官方开放平台","打开下方官方平台入口，按平台提示注册或登录，在 API Keys 页面创建一个 Key，创建后复制并妥善保存。");
         Button platform=action("打开 DeepSeek API Keys",false);addButton(apiGuide,platform,8);
         platform.setOnClickListener(v->openGuideUrl("https://platform.deepseek.com/api_keys"));
@@ -790,6 +812,31 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
         });
     }
     private void buildSettingsLanding(LinearLayout page){
+        if(padLayout){buildPadSettingsLanding(page);return;}
+        buildPhoneSettingsLanding(page);
+    }
+    private void buildPadSettingsLanding(LinearLayout page){
+        // Reuse the existing entries, listeners and sections; only rearrange their views.
+        LinearLayout source=new LinearLayout(this);source.setOrientation(LinearLayout.VERTICAL);
+        buildPhoneSettingsLanding(source);
+        arrangePadColumns(page,source);
+    }
+    /** Shared two-column rows for all Pad landing pages; headings retain full width. */
+    private void arrangePadColumns(LinearLayout page,LinearLayout source){
+        LinearLayout row=null;int cells=0;
+        while(source.getChildCount()>0){
+            View child=source.getChildAt(0);source.removeViewAt(0);
+            if(child instanceof TextView){page.addView(child);row=null;cells=0;continue;}
+            if(row==null||cells==2){row=new LinearLayout(this);row.setBaselineAligned(false);page.addView(row,new LinearLayout.LayoutParams(-1,-2));cells=0;}
+            LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,-2,1);lp.bottomMargin=dp(12);
+            if(cells==0)lp.rightMargin=dp(7);else lp.leftMargin=dp(7);
+            row.addView(child,lp);cells++;
+            if(source.getChildCount()==0||source.getChildAt(0) instanceof TextView){
+                if(cells==1)row.addView(new View(this),new LinearLayout.LayoutParams(0,1,1));
+            }
+        }
+    }
+    private void buildPhoneSettingsLanding(LinearLayout page){
         section(page,"设置",BuildConfig.DEVELOPER_BUILD?"按用途调整答题与诊断选项":"调整答题与运行选项");
         section(page,"外观","主题、液态玻璃与动效");
         entry(page,"外观与主题","默认悬浮窗绿 · 7 套配色 · 玻璃与动效开关",11);
@@ -931,6 +978,15 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
         text(card,"后续确定目标 APP 后，再接入专用识题、填写和切题流程。",13,palette.secondary,false);
     }
     private void buildAccount(LinearLayout page){
+        if(padLayout){
+            LinearLayout source=new LinearLayout(this);source.setOrientation(LinearLayout.VERTICAL);
+            buildPhoneAccount(source);
+            // Put the heading before the profile so the four panels form two complete rows.
+            View header=source.getChildAt(0);source.removeViewAt(0);source.addView(header,2);
+            arrangePadColumns(page,source);
+        }else buildPhoneAccount(page);
+    }
+    private void buildPhoneAccount(LinearLayout page){
         GlassCard header=glassCard(page,24f);
         LinearLayout body=header.body();
         ImageView logo=new ImageView(this);

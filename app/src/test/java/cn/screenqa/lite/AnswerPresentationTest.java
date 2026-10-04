@@ -4,6 +4,13 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class AnswerPresentationTest {
+    @Test public void summaryBoundaryIs20UnicodeCharactersAndDoesNotSplitEmoji(){
+        String exact="😀".repeat(20);
+        assertEquals(exact,AnswerPresentation.questionSummary(exact,"改写"));
+        String clipped=AnswerPresentation.questionSummary(exact+"？","😀".repeat(21));
+        assertEquals("😀".repeat(19)+"…",clipped);
+        assertEquals("保留否定条件",AnswerPresentation.questionSummary("长".repeat(21),"保留否定条件"));
+    }
     @Test public void readingTimeGivesTextAnswersTimeToCopyAndCapsLongAnswers(){
         assertEquals(10000L,AnswerPresentation.visibleMillis("A",false));
         assertEquals(20000L,AnswerPresentation.visibleMillis("氢、氧",true));
@@ -13,8 +20,8 @@ public class AnswerPresentationTest {
     @Test public void unicodeCharactersDoNotDoubleReadingTimeOrWidth(){
         assertEquals(AnswerPresentation.visibleMillis("答".repeat(100),true),
                 AnswerPresentation.visibleMillis("😀".repeat(100),true));
-        assertEquals(144,AnswerPresentation.bubbleWidthDp("A"));
-        assertEquals(272,AnswerPresentation.bubbleWidthDp("答".repeat(1000)));
+        assertEquals(184,AnswerPresentation.bubbleWidthDp("A"));
+        assertEquals(320,AnswerPresentation.bubbleWidthDp("答".repeat(1000)));
     }
     @Test public void blessingsAreLocalAndDoNotRepeatOnConsecutiveOpens(){
         String previous=SponsorBlessings.next();
