@@ -6,9 +6,9 @@ android {
         applicationId 'cn.screenqa.lite'
         minSdk 26
         targetSdk 35
-        testInstrumentationRunner 'cn.screenqa.lite.WattsonOverlayTest'
-        versionCode 29
-        versionName '1.3.0'
+        testInstrumentationRunner providers.gradleProperty('screenqaTestRunner').getOrElse('cn.screenqa.lite.WattsonOverlayTest')
+        versionCode 35
+        versionName '1.4.5'
         // The liquid glass native pipeline ships arm64-v8a only; x86_64 keeps the app installable
         // (emulator) and LiquidDock falls back to the hand-drawn GlassDock there.
         ndk { abiFilters 'arm64-v8a', 'x86_64' }
@@ -32,8 +32,8 @@ android {
         developer {
             dimension 'audience'
             applicationId 'cn.screenqa.lite.dev'
-            versionCode 29
-            versionName '1.3.0'
+            versionCode 35
+            versionName '1.4.5'
             versionNameSuffix '-dev'
             buildConfigField 'boolean', 'DEVELOPER_BUILD', 'true'
             buildConfigField 'boolean', 'DIAGNOSTICS_ENABLED', 'true'
@@ -44,8 +44,7 @@ android {
     }
     signingConfigs {
         debug {
-            rootProject.file('.local').mkdirs()
-            storeFile rootProject.file('.local/debug.keystore')
+            storeFile rootProject.file(providers.gradleProperty('screenqaDebugStore').getOrElse('.local/debug.keystore'))
         }
     }
     buildTypes {

@@ -18,6 +18,7 @@ final class Settings {
     static final String MODEL = "deepseek-flash";
     final SharedPreferences prefs;
     Settings(Context context) { prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE); }
+    Settings(SharedPreferences preferences) { prefs = preferences; }
     boolean autoSelect() {return prefs.getBoolean("auto_select",false);}
     boolean autoNext() {return prefs.getBoolean("auto_next",false);}
     boolean nextOverlay(){return prefs.getBoolean("next_overlay",false);}
@@ -75,8 +76,23 @@ final class Settings {
     /** Complete chat/completions URL; stays on the official default until the user overrides it. */
     String endpoint(){String value=prefs.getString("endpoint_url","");return value==null||value.isEmpty()?ENDPOINT:value;}
     void setEndpoint(String value){prefs.edit().putString("endpoint_url",value).apply();}
-    boolean thinking(){return prefs.getBoolean("thinking_enabled",false);}
-    void setThinking(boolean value){prefs.edit().putBoolean("thinking_enabled",value).apply();}
+    int reasoningLevel(){
+        if(!prefs.contains("reasoning_level")){
+            // An explicitly enabled legacy toggle migrates to cautious; all other installs start balanced.
+            int level=prefs.getBoolean("thinking_enabled",false)?4:3;
+            prefs.edit().putInt("reasoning_level",level).remove("thinking_enabled").apply();
+        }
+        return ReasoningStrategy.clamp(prefs.getInt("reasoning_level",3));
+    }
+    void setReasoningLevel(int value){prefs.edit().putInt("reasoning_level",ReasoningStrategy.clamp(value)).remove("thinking_enabled").apply();}
+    /** Apply the requested balanced starting point once; later explicit choices remain saved. */
+    void applyBalancedDefaultOnce(){
+        if(prefs.getBoolean("reasoning_balanced_default_applied",false))return;
+        prefs.edit().putInt("reasoning_level",3).remove("thinking_enabled")
+                .putBoolean("reasoning_balanced_default_applied",true).apply();
+    }
+    String lastReadAnnouncementId(){return prefs.getString("lastReadAnnouncementId","");}
+    void markAnnouncementRead(String id){prefs.edit().putString("lastReadAnnouncementId",id).apply();}
     boolean customEndpoint(){return !ENDPOINT.equals(endpoint());}
     static boolean isOfficialLegacyBase(String base) {
         try {

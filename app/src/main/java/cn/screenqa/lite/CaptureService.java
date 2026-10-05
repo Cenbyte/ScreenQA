@@ -36,6 +36,7 @@ public final class CaptureService extends Service {
     private final ExecutorService network=Executors.newSingleThreadExecutor();
     private final ExecutorService imaging=Executors.newSingleThreadExecutor();
     private final QuestionTracker tracker=new QuestionTracker();
+    private RequestQuestionGuard requestGuard;
     private final AnswerFollowup answerFollowup=new AnswerFollowup();
     private String answerQuestionSummary="";
     private static final int QUESTION_COLOR=0xFF263238,ANSWER_COLOR=0xFF004BA8;
@@ -771,7 +772,7 @@ public final class CaptureService extends Service {
         main.removeCallbacks(confirmStableFrame);stabilityWaitStartedAt=0;
         answerRetry=null;
         actionProof.observe(SystemClock.elapsedRealtime(),false);
-        epoch++;tracker.reset(); if(request!=null) {request.cancel();request=null;}
+        epoch++;tracker.reset();requestGuard=null; if(request!=null) {request.cancel();request=null;}
           pendingTap=null;rootTapPending=null;visionTapFallback=null;tapInFlight=false;textInputInFlight=false;
           nextPending=false;navigationTouchBusy=false;scrollContext=null;navigationAttempts=0;scrollAttempts=0;currentQuestionKey="";tapQuestionKey="";lastTextIdentity=null;
           lastAnsweredKey="";lastAnsweredStem="";
@@ -1093,6 +1094,10 @@ public final class CaptureService extends Service {
         }
         if(!candidateKey.isEmpty())currentQuestionKey=candidateKey;
         latestDocument=doc;
+        if(request!=null&&requestGuard!=null){
+            if(requestGuard.accepts(doc))return;
+            rejectGuardedRequest(request,"located_question_changed");
+        }
         int tokenNow=tracker.observe(QuestionStability.signature(doc,candidate));
         if(tokenNow!=activeToken) {
             if(request!=null){request.cancel();request=null;}
@@ -1129,26 +1134,52 @@ public final class CaptureService extends Service {
         final int token=tracker.begin(),submissionEpoch=epoch;
         final int editableHint=ScreenQaAccessibilityService.visibleEditableCount();
             final ApiRequest call=new ApiRequest(this,sourceNodes==null?"ocr":"accessibility").attempt(tracker.attemptCount());request=call;
+        final RequestQuestionGuard guard=candidate==null?new RequestQuestionGuard(doc):null;
+        requestGuard=guard;
+        if(guard!=null)call.onLocated(located->{
+            java.util.concurrent.FutureTask<Boolean> check=new java.util.concurrent.FutureTask<>(()->{
+                if(destroyed||paused||!autoMode||submissionEpoch!=epoch||request!=call)return false;
+                boolean valid=guard.locate(located,latestDocument);
+                QaLog.event("LOCATE guard="+(valid?"confirmed":"rejected")+" found="+located.found);
+                if(!valid)rejectGuardedRequest(call,"located_question_not_on_current_page");
+                return valid;
+            });
+            main.post(check);
+            try{return check.get(2,java.util.concurrent.TimeUnit.SECONDS);}
+            catch(Exception e){check.cancel(false);throw e;}
+        });
         aiStartedAt=now;setAutoState(AutoState.REQUESTING_AI,"question_ready");
         QaLog.event("DEEPSEEK start question="+shortId(candidateKey.isEmpty()?doc.fingerprint():candidateKey)+
                 " source="+(sourceNodes==null?"VISION_OCR":"ACCESSIBILITY"));
-        showState(OverlayState.ANALYZING,candidate==null?"正在快速定位题目…":"已在本机定位 · 正在快速作答…","正在获取答案…");
+        showState(OverlayState.ANALYZING,candidate==null?"正在快速定位题目…":call.answeringStatus(),"正在获取答案…");
+        call.onAnswering(()->main.post(()->{
+            if(!destroyed&&!paused&&autoMode&&submissionEpoch==epoch&&request==call)
+                showState(OverlayState.ANALYZING,call.answeringStatus(),"正在获取答案…");
+        }));
         if(candidate!=null){lastDetection=QuestionDetection.located(candidate);showOutline(doc,lastDetection);}
         network.execute(() -> {
             QuestionDetection detection=null;String error=null;
             try {detection=candidate==null?call.detect(apiKey,doc,editableHint):call.solve(apiKey,candidate);}
             catch(Exception e){error=ApiRequest.error(e);}
-            final QuestionDetection result=detection;final String failure=error;
+            final QuestionDetection response=detection;final String failure=error;
             main.post(() -> {
-                if(destroyed || paused || !autoMode || submissionEpoch!=epoch || !tracker.complete(token,result!=null,SystemClock.elapsedRealtime()))return;
-                request=null;
+                if(destroyed||paused||!autoMode||submissionEpoch!=epoch||request!=call||!tracker.isCurrent(token))return;
+                final ScreenDocument answerDoc=guard==null?doc:latestDocument;
+                QuestionDetection rebased=response;
+                if(guard!=null&&response!=null){
+                    try{rebased=guard.rebase(response,answerDoc);}catch(org.json.JSONException e){rebased=null;}
+                    if(rebased==null){rejectGuardedRequest(call,"answer_question_not_on_current_page");return;}
+                }
+                final QuestionDetection result=rebased;
+                if(!tracker.complete(token,result!=null,SystemClock.elapsedRealtime()))return;
+                request=null;requestGuard=null;
                 QaLog.event("DEEPSEEK end success="+(result!=null)+" elapsed_ms="+
                         (SystemClock.elapsedRealtime()-aiStartedAt)+" error="+(result==null?failure:"none"));
                 if(result==null){setAutoState(AutoState.DETECTING,"ai_failed");
                     showState(OverlayState.ERROR,"自动定位失败 · 将重试；手动框选见高级设置",failure);return;}
                 if(!result.found){setAutoState(AutoState.DETECTING,"ai_found_no_question");
                     clearOutline();showState(OverlayState.SEARCHING,"当前未找到题目 · 持续监测","未发现可识别题目；请露出题干，或到高级设置使用手动框选。");return;}
-                String resolvedKey=stemKey(doc,result.stemIds);
+                String resolvedKey=stemKey(answerDoc,result.stemIds);
                 if(answerFollowup.same(resolvedKey)||(nextPending&&resolvedKey.equals(lastAnsweredKey))){
                     QaLog.event("ANSWER duplicate_suppressed reason=answered_stem_still_visible");return;
                 }
@@ -1174,7 +1205,7 @@ public final class CaptureService extends Service {
                         " FillBlankAutoInput="+execution.autoExecute("fill_blank")+
                         " ShortAnswerAutoInput="+execution.autoExecute("short_answer")+
                         " AnswerCount="+result.answers.size()+" AIAnswerLength="+result.answer.length());
-                showOutline(doc,result);
+                showOutline(answerDoc,result);
                 boolean textType="fill_blank".equals(result.type)||"short_answer".equals(result.type);
                 if(!textType)lastTextIdentity=null;
                 String detail=textType&&result.complete?TextAnswer.display(result.answers):result.answer;
@@ -1182,10 +1213,10 @@ public final class CaptureService extends Service {
                 if(result.complete){setAutoState(AutoState.RESOLVING_TARGET,"ai_answer_received");
                     if(!execute){QaLog.event("AutoExecute skipped: disabled for "+result.type.toUpperCase(java.util.Locale.ROOT));
                         lastAnsweredKey=currentQuestionKey;lastAnsweredStem=currentQuestionKey;
-                        if(textType)lastTextIdentity=TextQuestionIdentity.from(doc,result.stemIds);
+                        if(textType)lastTextIdentity=TextQuestionIdentity.from(answerDoc,result.stemIds);
                         setAutoState(AutoState.STOPPED,"auto_execute_disabled_waiting_user");}
-                    else if(textType)maybeFillText(result,doc,submissionEpoch);
-                    else maybeAutoSelect(result.type,result.answer,doc,result.questionIds,result.stemIds,sourceNodes,token,submissionEpoch);}
+                    else if(textType)maybeFillText(result,answerDoc,submissionEpoch);
+                    else maybeAutoSelect(result.type,result.answer,answerDoc,result.questionIds,result.stemIds,sourceNodes,token,submissionEpoch);}
                 else setAutoState(AutoState.STOPPED,"question_incomplete");
                 answerQuestionSummary=result.summary;
                 showAnswer(textType?result.typeName():AnswerPresentation.compact(result.type,result.answer),detail,
@@ -1194,6 +1225,13 @@ public final class CaptureService extends Service {
                 if(result.complete)startAnswerFollowup(execute);
             });
         });
+    }
+    private void rejectGuardedRequest(ApiRequest call,String reason){
+        if(request!=call)return;
+        call.cancel();request=null;requestGuard=null;tracker.reset();lastDetection=null;clearOutline();
+        setAutoState(AutoState.DETECTING,reason);
+        showState(OverlayState.SEARCHING,"题目变化 · 等待文字稳定","正在定位当前题目…");
+        lastFrame=0;requestFreshFrame();
     }
     private void maybeFillText(QuestionDetection result,ScreenDocument doc,int requestEpoch) {
         ScreenQaAccessibilityService service=ScreenQaAccessibilityService.active;

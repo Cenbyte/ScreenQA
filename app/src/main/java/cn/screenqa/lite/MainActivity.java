@@ -42,6 +42,9 @@ import java.util.function.IntConsumer;
 
 public final class MainActivity extends Activity implements CaptureService.UiObserver {
     private static final int CAPTURE=40,EXPORT_LOG=42,ACCESSIBILITY=43,EXPORT_USAGE=44;
+    private static final String ANNOUNCEMENT_ID="screenqa-1.4.5";
+    private static final String UPDATE_DRIVE_URL="https://wwapn.lanzoul.com/b01gicwsdc";
+    private TextView announcementDot;
     private Settings settings;
     private ThemePalette palette;
     private EditText key,customModelField,customEndpointField;
@@ -59,7 +62,7 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
     private boolean padLayout;
     private View[] pages=new View[3];
     private ScrollView[] scrolls=new ScrollView[3];
-    private View[] details=new View[13];
+    private View[] details=new View[15];
     private int selectedTab,selectedDetail=-1;
     private int feedbackToken;
     private final GlassBackdrop backdrop=new GlassBackdrop();
@@ -82,6 +85,7 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
         super.onCreate(bundle);
         settings=new Settings(this);
         settings.migrateThemeDefault();
+        settings.applyBalancedDefaultOnce();
         palette=settings.theme();
         applyWindowColors();
         if(!UsageDeclaration.isAccepted(settings.prefs.getInt(UsageDeclaration.KEY,0))){
@@ -212,9 +216,20 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
         text(names,"大学生小帮手",21,palette.foreground,true);
         text(names,BuildConfig.DEVELOPER_BUILD?"开发者版本 / Developer Build":"个人学习 · 独立思考",
                 10,BuildConfig.DEVELOPER_BUILD?palette.accent:palette.secondary,true);
-        TextView version=text(brand,BuildConfig.VERSION_NAME,11,palette.accent,true);
-        version.setPadding(dp(10),dp(5),dp(10),dp(5));
-        version.setBackground(shape(palette.accentSoft,0,dp(100),0));
+        LinearLayout versionNotice=new LinearLayout(this);versionNotice.setOrientation(LinearLayout.VERTICAL);
+        versionNotice.setGravity(Gravity.CENTER);versionNotice.setMinimumHeight(dp(48));
+        versionNotice.setPadding(dp(12),dp(6),dp(12),dp(6));
+        versionNotice.setBackground(ripple(palette.accent,0x55FFFFFF,dp(16)));
+        brand.addView(versionNotice,new LinearLayout.LayoutParams(-2,-2));
+        LinearLayout noticeLabel=new LinearLayout(this);noticeLabel.setGravity(Gravity.CENTER);
+        versionNotice.addView(noticeLabel);
+        text(noticeLabel,"公告 · 教程",12,palette.onAccent,true);
+        announcementDot=new TextView(this);announcementDot.setText(" ●");announcementDot.setTextSize(13);
+        announcementDot.setTextColor(0xFFE53935);noticeLabel.addView(announcementDot);
+        text(versionNotice,"v"+BuildConfig.VERSION_NAME,9,palette.onAccent,false);
+        announcementDot.setVisibility(ANNOUNCEMENT_ID.equals(settings.lastReadAnnouncementId())?View.GONE:View.VISIBLE);
+        versionNotice.setContentDescription("公告与使用教程，版本 "+BuildConfig.VERSION_NAME);
+        versionNotice.setOnClickListener(v->openDetail(13,true));
 
         TextView declaration=text(top,UsageDeclaration.MARQUEE,12,palette.accent,false);
         declaration.setSingleLine(true);
@@ -396,7 +411,7 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
         glassViews.clear();
         pages=new View[3];
         scrolls=new ScrollView[3];
-        details=new View[13];
+        details=new View[15];
         selectedDetail=-1;
         dock=null;
         aurora=null;
@@ -471,7 +486,10 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
         parent.addView(label);return label;
     }
     private LinearLayout card(LinearLayout parent){
-        LinearLayout card=new LinearLayout(this);card.setOrientation(LinearLayout.VERTICAL);
+        return card(parent,new LinearLayout(this));
+    }
+    private LinearLayout card(LinearLayout parent,LinearLayout card){
+        card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(dp(18),dp(17),dp(18),dp(17));
         card.setBackground(shape(palette.surface,palette.border,dp(20),dp(1)));card.setElevation(dp(1));
         LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.bottomMargin=dp(14);parent.addView(card,lp);
@@ -596,7 +614,18 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
         Button permissions=action("权限说明与状态",false);
         addButton(page,permissions,4);
         permissions.setOnClickListener(v->openDetail(7,true));
-        buildHomeGuide(noticePage,guidePage,apiPage);
+        ReasoningCard strategyCard=(ReasoningCard)card(noticePage,new ReasoningCard(this,palette));
+        LinearLayout strategyHeading=new LinearLayout(this);strategyHeading.setGravity(Gravity.CENTER_VERTICAL);
+        strategyCard.addView(strategyHeading,new LinearLayout.LayoutParams(-1,-2));
+        text(strategyHeading,"AI 思考策略",16,palette.foreground,true);
+        TextView balancedTip=text(strategyHeading,"推荐使用均衡",11,palette.accent,true);
+        balancedTip.setPadding(dp(6),dp(2),dp(6),dp(2));
+        balancedTip.setBackground(shape(palette.accentSoft,0,dp(8),0));
+        ((LinearLayout.LayoutParams)balancedTip.getLayoutParams()).leftMargin=dp(8);
+        ReasoningControls reasoningControls=new ReasoningControls(this,settings,palette);
+        strategyCard.addView(reasoningControls,new LinearLayout.LayoutParams(-1,-2));
+        reasoningControls.attachArtwork(strategyCard);
+        text(strategyCard,"仅影响下一次请求 · 思考更深不会增加答案长度",11,palette.secondary,false);
     }
 
     private void showPetIntroduction(){
@@ -643,14 +672,47 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
             scroll.post(()->{int limit=Math.round(getResources().getDisplayMetrics().heightPixels*0.5f);if(scroll.getHeight()>limit){scroll.setLayoutParams(new LinearLayout.LayoutParams(-1,limit));window.setLayout(width,-2);}});
         }
     }
-    private void buildHomeGuide(LinearLayout noticePage,LinearLayout guidePage,LinearLayout apiPage){
-        section(noticePage,"公告","请先了解当前功能的使用边界");
-        LinearLayout notice=card(noticePage);
-        text(notice,"识别看答案已较成熟，自动选择仍需留意",16,palette.accent,true);
-        text(notice,"自动识别并展示答案功能已经比较成熟，适合学习练习时查看参考解析；AI 答案仍需自行核验。",14,palette.foreground,false);
-        text(notice,"自动选择答案的稳定性还不够，可以在有人看护时尝试，但不建议用于无人值守、挂机刷题。出现误选或卡住时，请关闭辅助自动执行，继续使用识别和复制答案。",14,palette.secondary,false);
+    private void buildAnnouncements(LinearLayout noticePage){
+        section(noticePage,"公告","推荐设置、下载更新与首次使用教程");
+        LinearLayout recommended=card(noticePage);
+        text(recommended,"推荐设置",16,palette.accent,true);
+        text(recommended,"仅建议使用 DeepSeek V4.1 Flash 模型。",15,palette.foreground,true);
+        text(recommended,"大多数场景只使用“均衡”即可，无需经常调整 AI 思考策略。",14,palette.secondary,false);
 
-        section(guidePage,"首次使用教学","常驻首页，随时回来查看");
+        LinearLayout downloads=card(noticePage);
+        text(downloads,"下载与更新",16,palette.accent,true);
+        text(downloads,"GitHub 无法打开时，请在蓝奏云网盘中下载更新。",14,palette.foreground,true);
+        TextView driveLink=text(downloads,UPDATE_DRIVE_URL,13,palette.accent,false);
+        driveLink.setPadding(0,dp(10),0,dp(6));
+        driveLink.setPaintFlags(driveLink.getPaintFlags()|android.graphics.Paint.UNDERLINE_TEXT_FLAG);
+        driveLink.setOnClickListener(v->openGuideUrl(UPDATE_DRIVE_URL));
+        text(downloads,"网盘密码：6666",15,palette.foreground,true);
+        Button drive=action("打开蓝奏云网盘更新 ↗",true);addButton(downloads,drive,8);
+        drive.setOnClickListener(v->openGuideUrl(UPDATE_DRIVE_URL));
+
+        LinearLayout notice=card(noticePage);
+        text(notice,"使用提醒",16,palette.accent,true);
+        text(notice,"自动识别并展示答案已较成熟，AI 答案仍需自行核验。",14,palette.foreground,false);
+        text(notice,"自动点击答案稳定性仍不足，建议有人看护时使用，不建议无人值守。",14,palette.secondary,false);
+
+        text(noticePage,"新增五档 AI 思考策略，可在首页调整；两条滑轨始终反向同步，正在执行的请求保持原策略。",14,palette.foreground,false);
+        section(noticePage,"第一次使用 ScreenQA？","");
+        Button tutorial=action("查看完整使用教程 →",false);addButton(noticePage,tutorial,8);
+        tutorial.setOnClickListener(v->openDetail(14,true));
+    }
+    private void buildTutorial(LinearLayout guidePage){
+        LinearLayout apiPage=guidePage;
+        section(guidePage,"首次使用教学","离线可查看，随时从公告进入");
+        LinearLayout keyReminder=card(guidePage);
+        keyReminder.setBackground(shape(palette.accentSoft,palette.accent,dp(20),dp(1)));
+        text(keyReminder,"先滑到最底部，获取 DeepSeek API Key ↓",16,palette.accent,true);
+        text(keyReminder,"第一次使用请先按页面底部的 API 教程获取自己的 Key，再回来配置 AI。",14,palette.foreground,true);
+        Button getKey=action("滑到最底部，先获取 API Key ↓",true);addButton(keyReminder,getKey,8);
+        getKey.setOnClickListener(v->{
+            View parent=guidePage;
+            while(parent.getParent() instanceof View && !(parent instanceof ScrollView))parent=(View)parent.getParent();
+            if(parent instanceof ScrollView)((ScrollView)parent).fullScroll(View.FOCUS_DOWN);
+        });
         LinearLayout guide=card(guidePage);
         guideStep(guide,"1  配置 AI","先按下面的教程获取自己的 DeepSeek API Key，然后到“设置 → AI 与模型”粘贴 Key，选择官方接口并保存配置、测试连接。");
         Button ai=action("去配置 AI 与模型",false);addButton(guide,ai,8);
@@ -666,7 +728,7 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
         Button platform=action("打开 DeepSeek API Keys",false);addButton(apiGuide,platform,8);
         platform.setOnClickListener(v->openGuideUrl("https://platform.deepseek.com/api_keys"));
         guideStep(apiGuide,"2  确认 API 账户可用","API 按实际 Token 用量计费，平台余额不足时无法调用；是否充值和金额由你自行决定，以平台当前规则为准。聊天网页可以使用，不代表 API 账户一定可调用。");
-        guideStep(apiGuide,"3  填入本应用","进入“设置 → AI 与模型”，粘贴 Key，接口选“DeepSeek 官方”，模型选 deepseek-flash；本应用的默认接口为 https://api.deepseek.com/chat/completions。点击“保存配置”后再“测试连接”。");
+        guideStep(apiGuide,"3  填入本应用","进入“设置 → AI 与模型”，粘贴 Key，接口选“DeepSeek 官方”，模型选 deepseek-flash；仅建议使用 DeepSeek V4.1 Flash。默认接口为 https://api.deepseek.com/chat/completions。保存配置后测试连接，大多数场景使用“均衡”即可。");
         guideStep(apiGuide,"4  连接失败时","401：检查 Key 是否正确；402：检查 DeepSeek API 账户余额；429：请求过快，稍后再试；500/503：服务异常或繁忙。具体原因以页面错误提示和官方说明为准。");
         text(apiGuide,"不要把 API Key 发给别人、公开截图或上传到代码仓库。教程依据 DeepSeek 官方文档整理，界面和计费规则可能调整。",12,palette.secondary,false);
         Button docs=action("查看 DeepSeek 官方 API 文档",false);addButton(apiGuide,docs,8);
@@ -855,7 +917,7 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
         if(BuildConfig.ROOT_SUPPORTED)entry(page,"Root","权限、自动授权与答案点击",4);
         entry(page,"某 APP 专用自动答题","后续接入指定 APP 流程",8);
     }
-    private int parentTabFor(int id){return id==10||id==11||id==12?2:1;}
+    private int parentTabFor(int id){if(id>=13)return 0;return id==10||id==11||id==12?2:1;}
 
     private void openDetail(int id,boolean animate){
         if(id<0||id>=details.length)return;
@@ -865,9 +927,9 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
             ScrollView view=page(-1);
             LinearLayout body=(LinearLayout)view.getTag();
             int parentTab=parentTabFor(id);
-            Button back=action(parentTab==2?"‹  返回我的":"‹  返回设置",false);
+            Button back=action(id==14?"‹  返回公告":parentTab==0?"‹  返回首页":parentTab==2?"‹  返回我的":"‹  返回设置",false);
             addButton(body,back,0);
-            back.setOnClickListener(v->showTab(parentTab,true));
+            back.setOnClickListener(v->{if(id==14)openDetail(13,true);else showTab(parentTab,true);});
             switch(id){
                 case 0 -> buildAutoSettings(body);
                 case 1 -> buildRecognitionSettings(body);
@@ -882,11 +944,19 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
                 case 10 -> buildAbout(body);
                 case 11 -> buildAppearanceSettings(body);
                 case 12 -> buildSponsor(body);
+                case 13 -> buildAnnouncements(body);
+                case 14 -> buildTutorial(body);
                 default -> {return;}
             }
             details[id]=view;
             contentHost.addView(view);
         }
+        if(id==13)details[id].post(()->{
+            if(selectedDetail==13&&details[13].isShown()){
+                settings.markAnnouncementRead(ANNOUNCEMENT_ID);
+                if(announcementDot!=null)announcementDot.setVisibility(View.GONE);
+            }
+        });
         selectedDetail=id;
         for(View page:pages)if(page!=null)page.setVisibility(View.GONE);
         for(int i=0;i<details.length;i++)if(details[i]!=null)details[i].setVisibility(i==id?View.VISIBLE:View.GONE);
@@ -1077,9 +1147,9 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
                 "预算仅使用自设单价；CSV 不含题目、答案或密钥。",12,palette.secondary,false);
         text(page,"CSV 带脱敏题干 SHA-256 标识与稳定识别周期内的请求次数，可汇总同题成本；未定位成功时题标识为空。"+
                 "混合模型请按 CSV 的模型分别计价，页面预算使用统一自设单价。",12,palette.secondary,false);
-        text(page,"分类说明：connection_test=连接测试，manual_answer=手动答题，screen_detect=AI定位并解题，local_solve=本地定位后解题；"+
+        text(page,"分类说明：connection_test=连接测试，manual_answer=手动答题，screen_detect=旧版定位并解题，screen_locate=快速定位，screen_solve=定位后答题，local_solve=本地定位后解题；"+
                 "choice=选择，true_false=判断，fill_blank=填空，short_answer=简答，unknown=未知。"+
-                "answered=答案可用，incomplete=条件不完整，no_question=无题，test_ok=连接成功，"+
+                "located=定位完成，answered=答案可用，incomplete=条件不完整，no_question=无题，test_ok=连接成功，"+
                 "cancelled=取消，timeout=超时，parse_error=格式异常，truncated=输出截断，http_error=接口失败，"+
                 "network_error=网络错误，missing_usage=响应缺少有效用量。",12,palette.secondary,false);
     }
@@ -1191,10 +1261,6 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
 
         final Button modelButton=action("",false);
         final Button endpointButton=action("",false);
-        final GoldSwitch thinking=new GoldSwitch(this);
-        thinking.setPalette(palette);
-        thinking.setReduceMotion(settings.reduceMotion());
-        thinking.setCheckedSilently(settings.thinking());
 
         apiSelection=new ApiSettingsSelection(settings.modelId(),settings.endpoint());
         customModelField=field("自定义模型 ID",apiSelection.customModel?settings.modelId():"",InputType.TYPE_CLASS_TEXT);
@@ -1215,16 +1281,8 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
         addButton(connection,endpointButton,10);
         connection.addView(customEndpointField,new LinearLayout.LayoutParams(-1,dp(50)));
 
-        LinearLayout thinkingRow=new LinearLayout(this);
-        thinkingRow.setGravity(Gravity.CENTER_VERTICAL);
-        LinearLayout.LayoutParams thinkingLp=new LinearLayout.LayoutParams(-1,-2);thinkingLp.topMargin=dp(14);
-        connection.addView(thinkingRow,thinkingLp);
-        LinearLayout thinkingLabels=new LinearLayout(this);thinkingLabels.setOrientation(LinearLayout.VERTICAL);
-        thinkingRow.addView(thinkingLabels,new LinearLayout.LayoutParams(0,-2,1));
-        text(thinkingLabels,"思考模式",15,palette.foreground,true);
-        text(thinkingLabels,"deepseek-reasoner 一类模型需要开启；普通模型建议关闭",12,palette.secondary,false);
-        thinkingRow.addView(thinking,new LinearLayout.LayoutParams(-2,-2));
-        thinking.setListener(value->{settings.setThinking(value);updateLiveStatus();});
+        text(connection,"思考强度统一由首页“AI 思考策略”控制，模型选择不会改变档位。",12,palette.secondary,false);
+        text(connection,"官方 deepseek-flash 支持五档思考；自定义接口使用 thinking 开关与 Prompt，实际支持情况由服务商决定。",12,palette.secondary,false);
 
         modelButton.setOnClickListener(v->{
             String[] labels=new String[ModelCatalog.MODELS.length];
@@ -1238,7 +1296,6 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
                 ModelCatalog.Model model=ModelCatalog.MODELS[index];
                 apiSelection.selectModel(model.id);
                 if(!model.id.isEmpty())settings.setModelId(model.id);
-                if(model.thinking){settings.setThinking(true);thinking.setCheckedSilently(true);}
                 sync.run();
                 updateLiveStatus();
             });
@@ -1628,6 +1685,7 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
         showFeedback("无障碍服务尚未连接。启用后可再次点击开启悬浮窗。");
     }
     @Override public void onBackPressed() {
+        if(selectedDetail==14){openDetail(13,true);return;}
         if(selectedDetail>=0){showTab(selectedTab,true);return;}
         if(selectedTab!=0){showTab(0,true);return;}
         super.onBackPressed();

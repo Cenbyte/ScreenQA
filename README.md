@@ -2,7 +2,7 @@
 
 大学生小帮手是我维护的 Android 学习辅助工具，用于识别学习材料中的题目、展示参考答案，并支持复制和连续识题。项目采用 Java 和原生 Android View 开发。
 
-当前版本：**1.3.0 / versionCode 29**。支持 Android 8.0 及以上，提供 arm64-v8a 和 x86_64 安装包。维护者：Cenbyte；联系邮箱：Cenbyte.dev@outlook.com。
+当前版本：**1.4.5 / versionCode 35**。支持 Android 8.0 及以上，提供 arm64-v8a 和 x86_64 安装包。维护者：Cenbyte；联系邮箱：Cenbyte.dev@outlook.com。
 
 **仅限个人学习研究，严禁用于考试、测验、考核中的违规答题、代考、协助作弊及任何非法用途。AI 参考答案可能有误，请独立思考并核验。**
 
@@ -50,14 +50,14 @@
 
 | 构建类型 | 包名 | 版本名 |
 | --- | --- | --- |
-| userRelease | cn.screenqa.lite | 1.3.0 |
-| userDebug | cn.screenqa.lite | 1.3.0 |
-| developerDebug | cn.screenqa.lite.dev | 1.3.0-dev |
+| userRelease | cn.screenqa.lite | 1.4.5 |
+| userDebug | cn.screenqa.lite | 1.4.5 |
+| developerDebug | cn.screenqa.lite.dev | 1.4.5-dev |
 
 开发者包可以与正式包并存，各自保存配置和授权。更新正式包需要沿用相同发布证书；调试证书不能覆盖正式安装。
 
 ## 发布与许可
 
-官方仓库：[Cenbyte/ScreenQA](https://github.com/Cenbyte/ScreenQA)。更新内容见 [1.3.0 更新说明](docs/RELEASE_NOTES_1.3.0.md)，上传方式见 [发布准备](docs/RELEASE_PREPARATION.md)。
+官方仓库：[Cenbyte/ScreenQA](https://github.com/Cenbyte/ScreenQA)。更新内容见 [1.4.5 更新说明](docs/RELEASE_NOTES_1.4.5.md)，上传方式见 [发布准备](docs/RELEASE_PREPARATION.md)。
 
 源码包包含代码、资源、测试源码、Gradle Wrapper、文档和许可证，不含运行日志、验证记录、本机工具缓存或签名密钥。项目许可见 [LICENSE](LICENSE)，第三方组件及素材保留各自署名与许可。

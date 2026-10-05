@@ -65,3 +65,6 @@ passwords.*
 api-key*
 api_key*
 apikey*
+
+# Isolated reasoning UI validation and build artifacts
+/build-reasoning/
