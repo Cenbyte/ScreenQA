@@ -50,6 +50,15 @@ public final class ReasoningPipelineTest {
         changed.onLocated(detection->false);
         try{changed.detect("fake-key",doc);throw new AssertionError("stale location submitted answer");}
         catch(java.io.InterruptedIOException expected){check(sent.size()==1);}
+        // References enter the actual answer POST only, never the locator POST.
+        sent.clear();phase=0;locator=complete;settings.setReasoningLevel(3);
+        String reference="参考 1 · e_eval / sample-id\n参考题：地球是行星\n参考答案：正确";
+        ApiRequest ragged=new ApiRequest(settings,null,"rag_probe").withRag((stem,full,stopped)->reference);
+        check(ragged.detect("fake-key",doc).complete);check(sent.size()==2);
+        check(!sent.get(0).toString().contains(reference));
+        check(sent.get(1).getJSONArray("messages").getJSONObject(1).getString("content").contains(reference));
+        check(sent.get(1).getJSONArray("messages").getJSONObject(0).getString("content").contains(KnowledgeRag.INSTRUCTION));
+        check(Settings.MODEL.equals(sent.get(1).getString("model")));
         // Simulate the repeated header changes from the report during the actual two-stage pipeline.
         sent.clear();phase=0;locator=complete;
         RequestQuestionGuard guard=new RequestQuestionGuard(doc);

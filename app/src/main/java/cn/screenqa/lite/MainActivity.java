@@ -41,8 +41,8 @@ import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 
 public final class MainActivity extends Activity implements CaptureService.UiObserver {
-    private static final int CAPTURE=40,EXPORT_LOG=42,ACCESSIBILITY=43,EXPORT_USAGE=44;
-    private static final String ANNOUNCEMENT_ID="screenqa-1.4.5";
+    private static final int CAPTURE=40,EXPORT_LOG=42,ACCESSIBILITY=43,EXPORT_USAGE=44,KNOWLEDGE_IMPORT=45;
+    private static final String ANNOUNCEMENT_ID="screenqa-1.5.0";
     private static final String UPDATE_DRIVE_URL="https://wwapn.lanzoul.com/b01gicwsdc";
     private TextView announcementDot;
     private Settings settings;
@@ -52,6 +52,7 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
     private TextView feedback,accessibilityStatus,captureStatus,logDetail,overlayPermissionStatus,overlaySettingsStatus,notificationStatus,tokenStats,rootStatus;
     private boolean rootRequestInFlight,rootAccessibilityPending;
     private Button test,captureButton,logButton;
+    private GoldSwitch homePetSwitch;
     private ExecutorService executor;
     private ApiRequest testing;
     private boolean notificationAsked,resumeCaptureAfterAccessibility,notificationForCapture;
@@ -62,7 +63,7 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
     private boolean padLayout;
     private View[] pages=new View[3];
     private ScrollView[] scrolls=new ScrollView[3];
-    private View[] details=new View[15];
+    private View[] details=new View[16];
     private int selectedTab,selectedDetail=-1;
     private int feedbackToken;
     private final GlassBackdrop backdrop=new GlassBackdrop();
@@ -78,6 +79,8 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
     private LinearLayout updateCard;
     private TextView updateTitle,updateDescription;
     private Button updateAction;
+
+    private static final String KNOWLEDGE_INTRO="知识库可在 AI 作答前本地检索相关题目和知识点，为 AI 提供额外参考，建议开启。";
 
     private int dp(float value){return Ui.dp(this,value);}
 
@@ -231,12 +234,7 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
         versionNotice.setContentDescription("公告与使用教程，版本 "+BuildConfig.VERSION_NAME);
         versionNotice.setOnClickListener(v->openDetail(13,true));
 
-        TextView declaration=text(top,UsageDeclaration.MARQUEE,12,palette.accent,false);
-        declaration.setSingleLine(true);
-        declaration.setEllipsize(android.text.TextUtils.TruncateAt.MARQUEE);
-        declaration.setMarqueeRepeatLimit(-1);
-        declaration.setSelected(true);
-        declaration.setContentDescription(UsageDeclaration.MARQUEE);
+        View declaration=new KnowledgeNoticeView(this,palette,()->openDetail(15,true));top.addView(declaration);
         declaration.setPadding(0,dp(10),0,dp(4));
         declaration.setLayoutParams(new LinearLayout.LayoutParams(-1,-2));
 
@@ -411,7 +409,7 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
         glassViews.clear();
         pages=new View[3];
         scrolls=new ScrollView[3];
-        details=new View[15];
+        details=new View[16];
         selectedDetail=-1;
         dock=null;
         aurora=null;
@@ -557,7 +555,7 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
         buildUpdateStatus(page);
         LinearLayout hero=new LinearLayout(this);
         hero.setOrientation(LinearLayout.VERTICAL);
-        hero.setPadding(dp(22),dp(24),dp(22),dp(22));
+        hero.setPadding(dp(22),dp(18),dp(22),dp(16));
         GradientDrawable bg=new GradientDrawable(GradientDrawable.Orientation.TL_BR,
                 new int[]{palette.heroStart,palette.heroEnd});
         bg.setCornerRadius(dp(26));hero.setBackground(bg);
@@ -569,40 +567,31 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
         headline.setPadding(0,dp(11),0,dp(7));
         text(hero,"开启后切到题目页面，自动识别并显示答案。",14,ThemePalette.alpha(palette.onAccent,0.80f),false);
         captureStatus=text(hero,"",13,ThemePalette.blend(palette.onAccent,palette.accent,0.4f),true);
-        captureStatus.setPadding(0,dp(17),0,dp(4));
+        captureStatus.setPadding(0,dp(12),0,dp(4));
         captureButton=action("开启悬浮助手",true);
         captureButton.setTextColor(palette.onAccent);
-        LinearLayout captureControls=new LinearLayout(this);captureControls.setGravity(Gravity.CENTER_VERTICAL);
-        LinearLayout.LayoutParams captureControlsLp=new LinearLayout.LayoutParams(-1,-2);captureControlsLp.topMargin=dp(12);
+        LinearLayout captureControls=new LinearLayout(this);captureControls.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams captureControlsLp=new LinearLayout.LayoutParams(-1,-2);captureControlsLp.topMargin=dp(8);
         hero.addView(captureControls,captureControlsLp);
-        captureControls.addView(captureButton,new LinearLayout.LayoutParams(0,-2,1));
-        LinearLayout petControl=new LinearLayout(this);petControl.setOrientation(LinearLayout.VERTICAL);petControl.setGravity(Gravity.CENTER);
-        LinearLayout.LayoutParams petControlLp=new LinearLayout.LayoutParams(dp(90),-2);petControlLp.leftMargin=dp(8);
+        captureControls.addView(captureButton,new LinearLayout.LayoutParams(-1,-2));
+        LinearLayout petControl=new LinearLayout(this);petControl.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams petControlLp=new LinearLayout.LayoutParams(-1,-2);petControlLp.topMargin=dp(10);
         captureControls.addView(petControl,petControlLp);
-        LinearLayout petLabel=new LinearLayout(this);petLabel.setGravity(Gravity.CENTER_VERTICAL);
-        petControl.addView(petLabel,new LinearLayout.LayoutParams(-2,-2));
-        TextView petTitle=text(petLabel,"2号桌宠",12,palette.onAccent,true);
-        // The text helper uses the parent's default width; this horizontal row needs wrap-content.
-        petTitle.setLayoutParams(new LinearLayout.LayoutParams(-2,-2));
-        petTitle.setIncludeFontPadding(false);
-        TextView petHelp=new TextView(this);petHelp.setText("?");petHelp.setTextSize(12);petHelp.setTextColor(palette.onAccent);
-        petHelp.setGravity(Gravity.CENTER);petHelp.setIncludeFontPadding(false);petHelp.setContentDescription("2号桌宠介绍");
-        GradientDrawable helpCircle=new GradientDrawable();helpCircle.setShape(GradientDrawable.OVAL);
-        helpCircle.setColor(android.graphics.Color.TRANSPARENT);helpCircle.setStroke(dp(1),palette.onAccent);
-        petHelp.setBackground(helpCircle);petHelp.setDefaultFocusHighlightEnabled(false);
-        LinearLayout.LayoutParams petHelpLp=new LinearLayout.LayoutParams(dp(18),dp(18));petHelpLp.leftMargin=dp(4);
-        petLabel.addView(petHelp,petHelpLp);petHelp.setOnClickListener(v->showPetIntroduction());
-        GoldSwitch petSwitch=new GoldSwitch(this);petSwitch.setPalette(palette);petSwitch.setReduceMotion(settings.reduceMotion());
-        // This hand-drawn control has its own track; the framework focus rectangle must not show.
-        petSwitch.setDefaultFocusHighlightEnabled(false);petSwitch.setBackground(null);petSwitch.setForeground(null);
-        petSwitch.setThumbGlow(false);
+        petControl.addView(new KnowledgeHomeControl(this,palette,settings.reduceMotion(),this::showKnowledgeIntroduction),new LinearLayout.LayoutParams(0,-2,1));
+        CompactToggleControl pet=new CompactToggleControl(this,palette,settings.reduceMotion(),"2号桌宠","2号桌宠介绍",this::showPetIntroduction);
+        LinearLayout.LayoutParams petLp=new LinearLayout.LayoutParams(0,-2,1);petLp.leftMargin=dp(12);petControl.addView(pet,petLp);
+        GoldSwitch petSwitch=pet.toggle;
+        homePetSwitch=petSwitch;
+        if(settings.nextOverlay() && petPermissionError()!=null)settings.setNextOverlay(false);
         petSwitch.setCheckedSilently(settings.nextOverlay());petSwitch.setContentDescription("2号桌宠悬浮窗，主助手开启后生效");
         petSwitch.setListener(value->{
             TouchFeedback.play(petSwitch,TouchFeedback.Strength.LIGHT);
+            String error=value?petPermissionError():null;
+            if(error!=null){petSwitch.setCheckedSilently(false);settings.setNextOverlay(false);showFeedback("开启失败："+error);return;}
             settings.setNextOverlay(value);
+            showFeedback(value?"2号桌宠已开启，主助手开启后生效":"2号桌宠已关闭");
             if(CaptureService.active)startService(new Intent(this,CaptureService.class).setAction("NEXT_OVERLAY"));
         });
-        petControl.addView(petSwitch,new LinearLayout.LayoutParams(-2,-2));
         captureButton.setOnClickListener(v->{
             TouchFeedback.play(v,TouchFeedback.Strength.STRONG);
             if(CaptureService.active){
@@ -629,7 +618,24 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
     }
 
     private void showPetIntroduction(){
-        showThemedInfo("2号桌宠","点击桌宠快捷强制开始识别题目，桌宠形象为沃特森抱着小水怪，此乃apex萌物",true);
+        String error=petPermissionError();
+        showThemedInfo("2号桌宠","点击桌宠快捷强制开始识别题目，桌宠形象为沃特森抱着小水怪，此乃apex萌物。\n\n需要悬浮窗权限，以及已连接的无障碍服务或已授权的 Root 触摸能力。主助手开启后生效。\n\n"+(error==null?"权限检查：已满足":"权限检查："+error),true);
+    }
+    private String petPermissionError(){
+        if(!android.provider.Settings.canDrawOverlays(this))return "缺少悬浮窗权限，请先到权限设置开启";
+        if(!TouchExecutor.available(this))return AccessibilityPermission.enabled(this)?"无障碍服务尚未连接，请稍后重试":"需开启无障碍服务或授权 Root 触摸";
+        return null;
+    }
+    private void showKnowledgeIntroduction(){
+        KnowledgeLibrary library=KnowledgeLibrary.get(this);showFeedback("正在检查知识库加载状态…");
+        library.checkReadiness(error->{
+            if(isDestroyed())return;
+            showFeedback(error==null?"知识库加载成功":"知识库未就绪："+error);
+            long count=library.state().packages.stream().filter(pack->pack.enabled).mapToLong(pack->pack.records).sum();
+            showThemedInfo("知识库",KNOWLEDGE_INTRO+"参考资料可能不完全匹配，请独立核验。关闭后继续原有 AI 作答流程。\n\n"+
+                    (error==null?"加载检查：成功 · "+KnowledgeTask.number(count)+" 条数据\n本地参考："+(library.ragEnabled()?"已开启":"已关闭"):"加载检查：未就绪\n"+error)+
+                    "\n\n可在设置 → 知识库管理中下载安装、启用或删除知识包。",false);
+        });
     }
     private void showThemedInfo(String heading,String message,boolean pet){
         showThemedInfo(heading,message,pet,null);
@@ -717,10 +723,15 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
         guideStep(guide,"1  配置 AI","先按下面的教程获取自己的 DeepSeek API Key，然后到“设置 → AI 与模型”粘贴 Key，选择官方接口并保存配置、测试连接。");
         Button ai=action("去配置 AI 与模型",false);addButton(guide,ai,8);
         ai.setOnClickListener(v->openDetail(2,true));
-        guideStep(guide,"2  开启悬浮助手","点击首页“开启悬浮助手”，按提示允许悬浮窗和屏幕共享；选择整个屏幕。授权通知便于查看运行状态和停止入口。");
-        guideStep(guide,"3  开始识别","切到学习练习页面，在悬浮窗点击开始。让题干和选项完整显示，停止滚动，把小水怪移开题目；允许无障碍可帮助读取页面文字，未开启时使用 OCR。");
-        guideStep(guide,"4  查看与复制","答案会在小水怪旁自动展开。填空、简答完整答案会自动复制，也可以点小复制图标。长答案可滚动；关闭后立即继续识题。需要重看时，点击小水怪展开控制面板，再点查看答案。");
-        guideStep(guide,"5  暂停或停止","悬浮窗可暂停、继续或关闭；也可以回首页停止助手。自动选择、填写和下一题默认关闭，需要尝试时到“设置 → 更多 → 辅助自动执行”单独开启。");
+        guideStep(guide,"2  了解本地知识库",KNOWLEDGE_INTRO+"参考资料可能不完全匹配，请结合题目判断。可以随时关闭。");
+        Button enableKnowledge=action("开启知识库并管理",true);addButton(guide,enableKnowledge,8);
+        enableKnowledge.setOnClickListener(v->{chooseKnowledge(true);openDetail(15,true);});
+        Button skipKnowledge=action("暂时跳过知识库",false);addButton(guide,skipKnowledge,8);
+        skipKnowledge.setOnClickListener(v->{chooseKnowledge(false);showFeedback("知识库已关闭，可随时在首页开启");});
+        guideStep(guide,"3  开启悬浮助手","点击首页“开启悬浮助手”，按提示允许悬浮窗和屏幕共享；选择整个屏幕。授权通知便于查看运行状态和停止入口。");
+        guideStep(guide,"4  开始识别","切到学习练习页面，在悬浮窗点击开始。让题干和选项完整显示，停止滚动，把小水怪移开题目；允许无障碍可帮助读取页面文字，未开启时使用 OCR。");
+        guideStep(guide,"5  查看与复制","答案会在小水怪旁自动展开。填空、简答完整答案会自动复制，也可以点小复制图标。长答案可滚动；关闭后立即继续识题。需要重看时，点击小水怪展开控制面板，再点查看答案。");
+        guideStep(guide,"6  暂停或停止","悬浮窗可暂停、继续或关闭；也可以回首页停止助手。自动选择、填写和下一题默认关闭，需要尝试时到“设置 → 更多 → 辅助自动执行”单独开启。");
 
         section(apiPage,"DeepSeek API 获取教程","在官方平台创建自己的 Key");
         LinearLayout apiGuide=card(apiPage);
@@ -900,6 +911,7 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
     }
     private void buildPhoneSettingsLanding(LinearLayout page){
         section(page,"设置",BuildConfig.DEVELOPER_BUILD?"按用途调整答题与诊断选项":"调整答题与运行选项");
+        addKnowledgeSummary(page);
         section(page,"外观","主题、液态玻璃与动效");
         entry(page,"外观与主题","默认悬浮窗绿 · 7 套配色 · 玻璃与动效开关",11);
         section(page,"识题与答案","最常用的行为设置");
@@ -917,7 +929,7 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
         if(BuildConfig.ROOT_SUPPORTED)entry(page,"Root","权限、自动授权与答案点击",4);
         entry(page,"某 APP 专用自动答题","后续接入指定 APP 流程",8);
     }
-    private int parentTabFor(int id){if(id>=13)return 0;return id==10||id==11||id==12?2:1;}
+    private int parentTabFor(int id){if(id==15)return 1;if(id>=13)return 0;return id==10||id==11||id==12?2:1;}
 
     private void openDetail(int id,boolean animate){
         if(id<0||id>=details.length)return;
@@ -946,10 +958,16 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
                 case 12 -> buildSponsor(body);
                 case 13 -> buildAnnouncements(body);
                 case 14 -> buildTutorial(body);
+                case 15 -> buildKnowledgeLibrary(body);
                 default -> {return;}
             }
-            details[id]=view;
-            contentHost.addView(view);
+            if(id==15){
+                LinearLayout wrapper=new LinearLayout(this);wrapper.setOrientation(LinearLayout.VERTICAL);wrapper.setBackgroundColor(palette.background);
+                wrapper.setPadding(dp(14),dp(12),dp(14),0);
+                wrapper.addView(new KnowledgeProgressView(this,palette),new LinearLayout.LayoutParams(-1,-2));
+                wrapper.addView(view,new LinearLayout.LayoutParams(-1,0,1));wrapper.setTag(body);
+                details[id]=wrapper;contentHost.addView(wrapper,new android.widget.FrameLayout.LayoutParams(-1,-1));
+            }else{details[id]=view;contentHost.addView(view);}
         }
         if(id==13)details[id].post(()->{
             if(selectedDetail==13&&details[13].isShown()){
@@ -980,6 +998,24 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
         Button open=action("打开悬浮窗权限设置",false);addButton(card,open,15);
         open.setOnClickListener(v->openOverlayPermission());
         text(page,"悬浮窗在屏幕共享启动后出现；可在悬浮窗内暂停、继续或关闭。",12,palette.secondary,false);
+    }
+
+    private void addKnowledgeSummary(LinearLayout page){
+        card(page).addView(new KnowledgeSummaryView(this,palette,()->openDetail(15,true),title->action(title,false)),new LinearLayout.LayoutParams(-1,-2));
+    }
+    private void chooseKnowledge(boolean enabled){
+        KnowledgeLibrary.get(this).requestRagEnabled(enabled,error->{if(error!=null && !isDestroyed())showFeedback("开启失败："+error);});
+        settings.prefs.edit().putBoolean("knowledge_onboarding_seen",true).apply();
+    }
+    private void buildKnowledgeLibrary(LinearLayout page){
+        section(page,"知识库","管理 AI 作答前的本地参考");
+        LinearLayout info=card(page);
+        info.addView(new KnowledgeLibraryPanel(this,palette,()->{
+            Intent picker=new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("application/zip").addCategory(Intent.CATEGORY_OPENABLE)
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            picker.putExtra(Intent.EXTRA_MIME_TYPES,new String[]{"application/zip","application/x-zip-compressed","application/octet-stream"});
+            try{startActivityForResult(picker,KNOWLEDGE_IMPORT);}catch(android.content.ActivityNotFoundException error){showFeedback("此设备没有文件选择器，请使用在线下载");}
+        },title->action(title,false)),new LinearLayout.LayoutParams(-1,-2));
     }
     private void buildRootSettings(LinearLayout page){
         section(page,"Root 增强","可选权限增强 · 默认关闭");
@@ -1462,6 +1498,13 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
         },5000);
     }
     private void updateLiveStatus(){
+        if(homePetSwitch!=null){
+            if(settings.nextOverlay() && petPermissionError()!=null){
+                settings.setNextOverlay(false);
+                if(CaptureService.active)startService(new Intent(this,CaptureService.class).setAction("NEXT_OVERLAY"));
+            }
+            homePetSwitch.setCheckedSilently(settings.nextOverlay());
+        }
         if(captureStatus!=null)captureStatus.setText(CaptureService.active?"● 悬浮助手运行中":"○ 悬浮助手尚未开启");
         if(captureButton!=null)captureButton.setText(CaptureService.active?"停止悬浮助手":"开启悬浮助手");
         updateAccessibilityStatus();
@@ -1538,6 +1581,9 @@ public final class MainActivity extends Activity implements CaptureService.UiObs
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request,result,data);
         if(!uiReady)return;
+        if(request==KNOWLEDGE_IMPORT){
+            if(result==RESULT_OK && data!=null && data.getData()!=null)KnowledgeLibrary.get(this).importUri(data.getData());return;
+        }
         if(request==EXPORT_USAGE){
             if(!BuildConfig.DEVELOPER_BUILD)return;
             if(result==RESULT_OK&&data!=null&&data.getData()!=null){android.net.Uri uri=data.getData();

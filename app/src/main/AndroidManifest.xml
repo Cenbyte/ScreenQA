@@ -17,6 +17,7 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity android:name=".KnowledgeBrowserActivity" android:exported="false" />
         <service android:name=".CaptureService" android:exported="false"
             android:foregroundServiceType="mediaProjection" />
         <service android:name=".ScreenQaAccessibilityService"

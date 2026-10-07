@@ -2,7 +2,7 @@
 
 大学生小帮手是我维护的 Android 学习辅助工具，用于识别学习材料中的题目、展示参考答案，并支持复制和连续识题。项目采用 Java 和原生 Android View 开发。
 
-当前版本：**1.4.5 / versionCode 35**。支持 Android 8.0 及以上，提供 arm64-v8a 和 x86_64 安装包。维护者：Cenbyte；联系邮箱：Cenbyte.dev@outlook.com。
+当前版本：**1.5.0 / versionCode 36**。支持 Android 8.0 及以上，提供 arm64-v8a 和 x86_64 安装包。维护者：Cenbyte；联系邮箱：Cenbyte.dev@outlook.com。
 
 **仅限个人学习研究，严禁用于考试、测验、考核中的违规答题、代考、协助作弊及任何非法用途。AI 参考答案可能有误，请独立思考并核验。**
 
@@ -16,6 +16,7 @@
 - 七套主题，默认象牙白；液态玻璃 Dock 支持即时滑动切换和触感反馈，可关闭玻璃或减弱动效。
 - 1 号小水怪悬浮助手与答案窗使用磨砂背景，角色图案保持清晰。Android 12 及以上且系统支持时使用跨窗口背景模糊，其余环境采用提高不透明度的材质回退。
 - 2 号 Wattson 桌宠可单独开关、拖动，点击尝试切换下一题；需要无障碍或已授权 Root，并能定位唯一明确的下一题按钮。
+- 可在线下载或导入 ZIP 知识包，在私有目录安全安装并建立本地全文索引。AI 作答前检索相关题目与知识点，提供有长度限制的额外参考；知识库可关闭，知识包可分别启用或删除。
 - 辅助自动选择、填写和自动下一题分别控制，默认关闭；关闭后仍可查看和复制答案。Root 增强需要单独授权。
 - 记录实际 Token 用量，提供可选本地日志；开发者版额外提供分类统计。应用内没有充值、余额或积分系统。
 
@@ -50,14 +51,16 @@
 
 | 构建类型 | 包名 | 版本名 |
 | --- | --- | --- |
-| userRelease | cn.screenqa.lite | 1.4.5 |
-| userDebug | cn.screenqa.lite | 1.4.5 |
-| developerDebug | cn.screenqa.lite.dev | 1.4.5-dev |
+| userRelease | cn.screenqa.lite | 1.5.0 |
+| userDebug | cn.screenqa.lite | 1.5.0 |
+| developerDebug | cn.screenqa.lite.dev | 1.5.0-dev |
 
 开发者包可以与正式包并存，各自保存配置和授权。更新正式包需要沿用相同发布证书；调试证书不能覆盖正式安装。
 
 ## 发布与许可
 
-官方仓库：[Cenbyte/ScreenQA](https://github.com/Cenbyte/ScreenQA)。更新内容见 [1.4.5 更新说明](docs/RELEASE_NOTES_1.4.5.md)，上传方式见 [发布准备](docs/RELEASE_PREPARATION.md)。
+官方仓库：[Cenbyte/ScreenQA](https://github.com/Cenbyte/ScreenQA)。更新内容见 [1.5.0 更新说明](docs/RELEASE_NOTES_1.5.0.md)，上传方式见 [发布准备](docs/RELEASE_PREPARATION.md)。
 
 源码包包含代码、资源、测试源码、Gradle Wrapper、文档和许可证，不含运行日志、验证记录、本机工具缓存或签名密钥。项目许可见 [LICENSE](LICENSE)，第三方组件及素材保留各自署名与许可。
+
+知识库界面：首页在“开启悬浮助手”按钮下方并排提供知识库和 2 号桌宠开关，问号可查看说明和加载检查；设置保留管理入口。知识库加载失败或桌宠权限不足时拒绝开启。未启用时在用途滚动字幕提醒，其他安装方式默认折叠，下载安装显示真实六步流程；普通用户隐藏检索诊断。详见 [知识库使用说明](docs/KNOWLEDGE_BASE.md)。

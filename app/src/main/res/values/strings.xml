@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools">
+    <string name="knowledge_page_error">网页加载失败：%1$s。可点重新打开重试。</string>
+    <string name="knowledge_page_http_error">网页服务器返回 HTTP %1$d</string>
+    <string name="knowledge_transfer_details">%1$s\n%2$s · %3$s%4$s%5$s</string>
     <string name="accessibility_description">助手运行时读取题目、选项与输入框以加快识别；仅在启用辅助自动执行时选择或填写答案，下一题单独控制。可随时暂停或关闭助手。</string>
     <string name="token_stats" tools:ignore="PluralsCandidate">最近一次有效用量\n输入 %1$d · 输出 %2$d · 总计 %3$d Token\n\n今日累计\n%4$d Token · %5$d 次请求\n\n历史累计\n%6$d Token · %7$d 次请求\n平均每次 %8$s Token\n\n缺少有效 usage 的成功响应：%9$d 次</string>
     <string name="overlay_drag_handle">%1$s · 拖动移动</string>
